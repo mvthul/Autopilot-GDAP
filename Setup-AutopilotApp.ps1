@@ -36,7 +36,11 @@ if ($loggedInTenant -ne $PartnerTenantId) {
 }
 
 Write-Host "Microsoft Graph-permissies ophalen..." -ForegroundColor Cyan
-$graphSp = az rest --method get --url "https://graph.microsoft.com/v1.0/servicePrincipals(appId='$graphAppId')" | ConvertFrom-Json
+$graphSpJson = az ad sp show --id $graphAppId -o json 2>$null
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($graphSpJson -join ""))) {
+    throw "De Microsoft Graph service principal kon niet worden opgehaald. Controleer of Azure CLI met een Global Administrator is aangemeld."
+}
+$graphSp = $graphSpJson | ConvertFrom-Json
 $scopeMap = @{}
 foreach ($scope in $graphSp.oauth2PermissionScopes) {
     $scopeMap[$scope.value] = $scope.id
