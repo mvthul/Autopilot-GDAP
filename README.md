@@ -9,7 +9,7 @@ De tool gebruikt een eigen multi-tenant App Registration van IT-Hulp. Er worden 
 Voer de setup éénmalig uit op een beheerpc met Azure CLI en Global Administrator-rechten:
 
 ```powershell
-irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Setup-AutopilotApp.ps1?v=latest" -OutFile .\Setup-AutopilotApp.ps1
+irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Setup-AutopilotApp.ps1?v=81f6aae" -OutFile .\Setup-AutopilotApp.ps1
 .\Setup-AutopilotApp.ps1 -PartnerTenantId "<PARTNER-TENANT-ID>"
 ```
 
