@@ -39,7 +39,7 @@ Iedere klanttenant moet afzonderlijk admin consent geven. GDAP/PIM blijft vereis
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
-irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Get-AutopilotGDAP.ps1?v=latest" | iex
+irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Get-AutopilotGDAP.ps1?v=2c3c327" | iex
 ```
 
 4. Configureer bij eerste gebruik de eigen client-id.
