@@ -171,14 +171,36 @@ $LogonBtn.Add_Click({
                 [System.Windows.MessageBoxImage]::Question
             )
             if ($res -eq 'Yes') {
-                $genericUrl = "https://login.microsoftonline.com/common/adminconsent?client_id=14d82eec-204b-4a57-966d-513373704195"
-                Set-Clipboard -Value $genericUrl
+                $StatusTxt.Text = "Kip en Ei doorbreken: Log in het volgende scherm in als Global Admin..."
                 try {
-                    Start-Process "msedge.exe" -ArgumentList $genericUrl -ErrorAction Stop
+                    # TROJAN HORSE voor Onbekende Tenant: We gebruiken de AzureAD App ID
+                    Connect-MgGraph -ClientId "1b730954-1685-4b74-9bfd-dac224a7b894" -Scopes "Application.ReadWrite.All" -NoWelcome -ErrorAction Stop
+                    
+                    $context = Get-MgContext
+                    $realTenantId = $context.TenantId
+                    
+                    # Maak de Service Principal aan
+                    $sp = Get-MgServicePrincipal -Filter "appId eq '14d82eec-204b-4a57-966d-513373704195'" -ErrorAction SilentlyContinue
+                    if (-not $sp) {
+                        New-MgServicePrincipal -AppId "14d82eec-204b-4a57-966d-513373704195" | Out-Null
+                    }
+                    Disconnect-MgGraph
+
+                    # Nu openen we de echte Consent URL
+                    $specificUrl = "https://login.microsoftonline.com/$realTenantId/adminconsent?client_id=14d82eec-204b-4a57-966d-513373704195"
+                    Set-Clipboard -Value $specificUrl
+                    
+                    try {
+                        Start-Process "msedge.exe" -ArgumentList $specificUrl -ErrorAction Stop
+                        $StatusTxt.Text = "Reparatie gelukt! Browser geopend voor definitief consent."
+                    } catch {
+                        [System.Windows.MessageBox]::Show("Toegang tot Edge mislukt. De exacte link staat op je klembord (Ctrl+V).`n`nLink: $specificUrl")
+                        $StatusTxt.Text = "Link gekopieerd. Graag accepteren via beheerder."
+                    }
                 } catch {
-                    [System.Windows.MessageBox]::Show("Toegang tot Edge mislukt. De link staat op je klembord (Ctrl+V).`n`nIn de link, let op dat je 'common' vervangt door het Tenant-ID als het niet werkt.`nLink: $genericUrl")
+                    [System.Windows.MessageBox]::Show("Toestemming Mislukt: $_")
+                    $StatusTxt.Text = "Reparatie afgebroken."
                 }
-                $StatusTxt.Text = "Reparatie link geopend."
             } else {
                 $StatusTxt.Text = "Login afgebroken door gebruiker."
             }
