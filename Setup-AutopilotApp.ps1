@@ -26,7 +26,7 @@ $scopeNames = @(
 $partnerCenterScope = "https://api.partnercenter.microsoft.com/user_impersonation"
 
 if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
-    throw "Azure CLI is niet geïnstalleerd. Installeer Azure CLI en voer dit script opnieuw uit."
+    throw "Azure CLI is niet geinstalleerd. Installeer Azure CLI en voer dit script opnieuw uit."
 }
 
 Write-Host "Aanmelden op partner-tenant $PartnerTenantId..." -ForegroundColor Cyan
@@ -101,7 +101,8 @@ az ad app update --id $appObjectId --public-client-redirect-uris http://localhos
 if ($LASTEXITCODE -ne 0) { throw "De localhost redirect URI kon niet worden ingesteld." }
 $brokerRedirect = "ms-appx-web://Microsoft.AAD.BrokerPlugin/$clientId"
 $partnerCenterRedirect = "http://localhost:8765/"
-az ad app update --id $appObjectId --public-client-redirect-uris http://localhost $brokerRedirect $partnerCenterRedirect | Out-Null
+$graphRedirect = "http://localhost:8766/"
+az ad app update --id $appObjectId --public-client-redirect-uris http://localhost $brokerRedirect $partnerCenterRedirect $graphRedirect | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "De Windows Web Account Manager redirect URI kon niet worden ingesteld." }
 
 $previousErrorActionPreference = $ErrorActionPreference
@@ -138,5 +139,5 @@ if ($consentExitCode -ne 0) {
 Write-Host ""
 Write-Host "Open daarna deze URL voor Partner Center-klantlijst-consent:" -ForegroundColor Green
 Write-Host $partnerCenterConsentUrl
-Write-Host "De runtime-tool gebruikt daarna een normale browser-aanmelding via $partnerCenterRedirect; device code wordt niet gebruikt." -ForegroundColor Yellow
+Write-Host "De runtime-tool gebruikt normale browser-aanmelding via $partnerCenterRedirect en $graphRedirect; WAM en device code worden niet gebruikt." -ForegroundColor Yellow
 Write-Host "De client-id moet daarna in Get-AutopilotGDAP.ps1 worden ingevuld op PublicClientId." -ForegroundColor Yellow

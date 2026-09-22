@@ -3,7 +3,7 @@
   Autopilot GDAP GUI - Ontwikkeld voor MSP IT-Hulp met ingebouwde Admin Consent afhandeling
 #>
 $Global:PublicClientId = "6a87f18c-ab0a-4ef9-bb1c-587ae884b8e0"
-$env:MSAL_FORCE_WAM = "0"
+$Global:PartnerTenantId = "26aaae92-5737-48a2-b00c-27aff5b013e7"
 
 if ($Global:PublicClientId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$') {
     throw "De eigen App Registration is nog niet geconfigureerd. Voer Setup-AutopilotApp.ps1 eenmalig uit en vervang PublicClientId in dit script."
@@ -277,6 +277,77 @@ function Get-PartnerCenterAccessToken {
         if ($listener.IsListening) { $listener.Stop() }
         $listener.Close()
     }
+}
+
+function Get-BrowserGraphAccessToken {
+    param(
+        [Parameter(Mandatory = $true)][string]$TenantId,
+        [Parameter(Mandatory = $true)][string[]]$Scopes
+    )
+    $scope = (($Scopes + @("openid", "profile", "offline_access")) | Select-Object -Unique) -join " "
+    $authority = "https://login.microsoftonline.com/$TenantId/oauth2/v2.0"
+    $redirectUri = "http://localhost:8766/"
+    $listener = New-Object System.Net.HttpListener
+    try {
+        $listener.Prefixes.Add($redirectUri)
+        $listener.Start()
+    }
+    catch {
+        $listener.Close()
+        throw "Graph-browseraanmelding kan de lokale callback niet starten op $redirectUri. Sluit een andere toolinstantie. Details: $($_.Exception.Message)"
+    }
+    try {
+        $authorizeUri = "$authority/authorize?client_id=$([uri]::EscapeDataString($Global:PublicClientId))&response_type=code&redirect_uri=$([uri]::EscapeDataString($redirectUri))&response_mode=query&scope=$([uri]::EscapeDataString($scope))&prompt=select_account"
+        Start-Process $authorizeUri -ErrorAction Stop
+        $asyncResult = $listener.BeginGetContext($null, $null)
+        if (-not $asyncResult.AsyncWaitHandle.WaitOne(300000)) {
+            throw "De Graph-browseraanmelding duurde langer dan vijf minuten."
+        }
+        $context = $listener.EndGetContext($asyncResult)
+        $query = $context.Request.QueryString
+        $html = if ($query["error"]) {
+            "<html><body><h2>Aanmelding niet voltooid</h2><p>U kunt dit venster sluiten.</p></body></html>"
+        } else {
+            "<html><body><h2>Aanmelding voltooid</h2><p>U kunt dit venster sluiten en teruggaan naar de Autopilot-tool.</p></body></html>"
+        }
+        $bytes = [Text.Encoding]::UTF8.GetBytes($html)
+        $context.Response.ContentType = "text/html; charset=utf-8"
+        $context.Response.ContentLength64 = $bytes.Length
+        $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+        $context.Response.OutputStream.Close()
+        if ($query["error"]) {
+            throw "Graph-aanmelding mislukt: $($query['error_description'])"
+        }
+        try {
+            $token = Invoke-RestMethod -Method POST -Uri "$authority/token" -Body @{
+                grant_type = "authorization_code"
+                client_id = $Global:PublicClientId
+                code = $query["code"]
+                redirect_uri = $redirectUri
+                scope = $scope
+            } -ContentType "application/x-www-form-urlencoded" -ErrorAction Stop
+        }
+        catch {
+            $detail = $_.ErrorDetails.Message
+            if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
+            throw "Graph-token ophalen mislukt: $detail"
+        }
+        return [string]$token.access_token
+    }
+    finally {
+        if ($listener.IsListening) { $listener.Stop() }
+        $listener.Close()
+    }
+}
+
+function Connect-BrowserGraph {
+    param(
+        [Parameter(Mandatory = $true)][string]$TenantId,
+        [Parameter(Mandatory = $true)][string[]]$Scopes
+    )
+    $accessToken = Get-BrowserGraphAccessToken -TenantId $TenantId -Scopes $Scopes
+    $secureToken = ConvertTo-SecureString $accessToken -AsPlainText -Force
+    Connect-MgGraph -AccessToken $secureToken -ContextScope Process -NoWelcome -ErrorAction Stop
 }
 
 function Get-PartnerCenterCustomers {
@@ -591,9 +662,9 @@ $LogonBtn.Add_Click({
     $StatusTxt.Text = "Bezig met inloggen op algemeen partner profiel..."
     $LogonBtn.IsEnabled = $false
     try {
-        Connect-MgGraph -ClientId $Global:PublicClientId -Scopes @(
+        Connect-BrowserGraph -TenantId $Global:PartnerTenantId -Scopes @(
             "Directory.Read.All"
-        ) -ContextScope Process -NoWelcome -ErrorAction Stop
+        )
         $StatusTxt.Text = "Graph aangemeld. Partner Center-klanten ophalen..."
         $Script:AllContracts = Get-PartnerCenterCustomers
         Update-TenantDropdown
@@ -632,12 +703,12 @@ $LoadProfilesBtn.Add_Click({
         # Force a clean tenant switch. Partner Center uses its own token, so
         # the partner Graph context is not needed while reading the customer.
         Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
-        Connect-MgGraph -ClientId $Global:PublicClientId -TenantId $Script:TargetTenantId -Scopes @(
+        Connect-BrowserGraph -TenantId $Script:TargetTenantId -Scopes @(
             "DeviceManagementServiceConfig.ReadWrite.All",
             "Group.Read.All",
             "GroupMember.ReadWrite.All",
             "Directory.Read.All"
-        ) -ContextScope Process -NoWelcome -ErrorAction Stop
+        )
         $graphContext = Get-MgContext
         Write-ToolLog "Graph-account: $($graphContext.Account)"
         Write-ToolLog "Graph-tenant: $($graphContext.TenantId) (verwacht: $Script:TargetTenantId)"
