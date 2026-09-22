@@ -96,6 +96,8 @@ foreach ($scopeName in $scopeNames) {
 
 az ad app update --id $appObjectId --is-fallback-public-client true | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Public-client/device-code flow kon niet worden ingeschakeld." }
+az ad app update --id $appObjectId --public-client-redirect-uris http://localhost | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "De localhost redirect URI kon niet worden ingesteld." }
 
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
