@@ -15,6 +15,8 @@ irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/7408536/Setup-Autop
 
 Het setupscript maakt een multi-tenant public-client app aan, configureert de delegated Graph-permissies, maakt de Enterprise Application aan en opent de admin-consentpagina. Er wordt geen client secret aangemaakt.
 
+De app gebruikt `Directory.Read.All` voor het uitlezen van klantrelaties via `/contracts`; de aangemelde beheerder heeft hiervoor een ondersteunde directoryrol nodig.
+
 De huidige partner-app-client-id is al ingevuld in `Get-AutopilotGDAP.ps1`. Als je een nieuwe app aanmaakt, vervang je daar de waarde bij `PublicClientId` en publiceer je die versie. De runtime-tool vraagt op andere computers alleen nog om de IT-hulp-login.
 
 Iedere klanttenant moet afzonderlijk admin consent geven. GDAP/PIM blijft vereist; app-consent verleent geen Intune-rol.
@@ -27,15 +29,14 @@ Iedere klanttenant moet afzonderlijk admin consent geven. GDAP/PIM blijft vereis
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
-irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Get-AutopilotGDAP.ps1?v=9d54906" | iex
+irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/ab107c1/Get-AutopilotGDAP.ps1" | iex
 ```
 
-4. Configureer bij eerste gebruik de eigen client-id.
-5. Meld aan met het IT-hulpaccount.
-6. Selecteer de klanttenant en verbind met de klantcontext.
-7. Geef klantconsent wanneer de tool daarom vraagt.
-8. Selecteer het Autopilot-profiel en registreer het apparaat.
-9. Vink desgewenst aan dat het apparaat na import aan de toegewezen groep moet worden toegevoegd.
+4. Meld aan met het IT-hulpaccount.
+5. Selecteer de klanttenant en verbind met de klantcontext.
+6. Geef klantconsent wanneer de tool daarom vraagt.
+7. Selecteer het Autopilot-profiel en registreer het apparaat.
+8. Vink desgewenst aan dat het apparaat na import aan de toegewezen groep moet worden toegevoegd.
 
 ## Beveiliging
 

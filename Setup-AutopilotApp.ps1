@@ -21,7 +21,7 @@ $scopeNames = @(
     "DeviceManagementServiceConfig.Read.All",
     "Group.Read.All",
     "GroupMember.ReadWrite.All",
-    "Organization.Read.All"
+    "Directory.Read.All"
 )
 
 if (-not (Get-Command az -ErrorAction SilentlyContinue)) {

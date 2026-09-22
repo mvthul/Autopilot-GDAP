@@ -156,7 +156,7 @@ $LogonBtn.Add_Click({
     $LogonBtn.IsEnabled = $false
     try {
         Connect-MgGraph -ClientId $Global:PublicClientId -Scopes @(
-            "Organization.Read.All"
+            "Directory.Read.All"
         ) -NoWelcome -ErrorAction Stop
         $StatusTxt.Text = "Ingelogd! Contracten ophalen..."
         
