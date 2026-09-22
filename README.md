@@ -17,7 +17,7 @@ Het setupscript maakt een multi-tenant public-client app aan, configureert de de
 
 De tool gebruikt Partner Center `/v1/customers` voor de klantenlijst. Daardoor worden ook klanten zichtbaar die niet in Graph `/contracts` staan, zoals Hanab. Graph wordt daarna gebruikt voor Intune en Autopilot. De eerste keer zijn twee resource-aanmeldingen nodig: Graph en Partner Center.
 
-De Partner Center-refresh-token wordt uitsluitend lokaal per Windows-gebruiker met DPAPI versleuteld opgeslagen. Daardoor verschijnt de Partner Center-device-code op dezelfde pc niet bij iedere volgende start opnieuw. Op een nieuwe pc blijft een eerste aanmelding per gebruiker vereist.
+De Partner Center-refresh-token wordt uitsluitend lokaal per Windows-gebruiker met DPAPI versleuteld opgeslagen. De eerste Partner Center-aanmelding gebruikt een normale browser met dezelfde Microsoft SSO-sessie als de Graph-aanmelding; device code wordt niet gebruikt. Op een nieuwe pc blijft een eerste browser-aanmelding per gebruiker vereist.
 
 De huidige partner-app-client-id is al ingevuld in `Get-AutopilotGDAP.ps1`. Als je een nieuwe app aanmaakt, vervang je daar de waarde bij `PublicClientId` en publiceer je die versie. De runtime-tool vraagt op andere computers alleen nog om de IT-hulp-login.
 
@@ -35,7 +35,7 @@ irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/G
 ```
 
 4. Meld aan met het IT-hulpaccount.
-5. Bevestig bij eerste gebruik ook de Partner Center-device-code-aanmelding.
+5. Bevestig bij eerste gebruik ook de Partner Center-browseraanmelding. De setup registreert hiervoor `http://localhost:8765/` als loopback redirect.
 6. Gebruik het zoekveld boven de klantlijst om bijvoorbeeld `Hanab` te zoeken. De lijst komt uit Partner Center. Elke keuze toont nu de klantnaam, het primaire tenantdomein en de tenant-ID; dubbele klantnamen zijn daardoor herkenbaar.
 7. Selecteer de klanttenant en verbind met de klantcontext.
 8. Geef klantconsent wanneer de tool daarom vraagt.

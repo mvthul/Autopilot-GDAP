@@ -212,41 +212,64 @@ function Get-PartnerCenterAccessToken {
         }
     }
 
-    $deviceCode = Invoke-RestMethod -Method POST `
-        -Uri "https://login.microsoftonline.com/organizations/oauth2/v2.0/devicecode" `
-        -Body @{ client_id = $Global:PublicClientId; scope = $scope } `
-        -ContentType "application/x-www-form-urlencoded" `
-        -ErrorAction Stop
+    # Graph and Partner Center are different OAuth resources, so the Graph
+    # access token cannot be reused. This browser flow does reuse the user's
+    # existing Microsoft SSO session and avoids device-code authentication.
+    $redirectUri = "http://localhost:8765/"
+    $listener = New-Object System.Net.HttpListener
+    try {
+        $listener.Prefixes.Add($redirectUri)
+        $listener.Start()
+    }
+    catch {
+        $listener.Close()
+        throw "Partner Center-aanmelding kan de lokale callback niet starten op $redirectUri. Sluit een eventueel andere instantie van de tool en probeer opnieuw. Details: $($_.Exception.Message)"
+    }
 
-    Start-Process $deviceCode.verification_uri -ErrorAction SilentlyContinue
-    [System.Windows.MessageBox]::Show(
-        "Eenmalige Partner Center-aanmelding vereist.`n`nOpen: $($deviceCode.verification_uri)`nCode: $($deviceCode.user_code)`n`nMeld aan met het IT-Hulp-account. Als consent wordt gevraagd, accepteer dit.",
-        "Partner Center aanmelden",
-        [System.Windows.MessageBoxButton]::OK,
-        [System.Windows.MessageBoxImage]::Information
-    ) | Out-Null
+    try {
+        $authorizeUri = "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?client_id=$([uri]::EscapeDataString($Global:PublicClientId))&response_type=code&redirect_uri=$([uri]::EscapeDataString($redirectUri))&response_mode=query&scope=$([uri]::EscapeDataString($scope))&prompt=select_account"
+        Start-Process $authorizeUri -ErrorAction Stop
+        $asyncResult = $listener.BeginGetContext($null, $null)
+        if (-not $asyncResult.AsyncWaitHandle.WaitOne(300000)) {
+            throw "De browser-aanmelding duurde langer dan vijf minuten."
+        }
+        $context = $listener.EndGetContext($asyncResult)
+        $query = $context.Request.QueryString
+        $html = if ($query["error"]) {
+            "<html><body><h2>Aanmelding niet voltooid</h2><p>U kunt dit venster sluiten.</p></body></html>"
+        } else {
+            "<html><body><h2>Aanmelding voltooid</h2><p>U kunt dit venster sluiten en teruggaan naar de Autopilot-tool.</p></body></html>"
+        }
+        $bytes = [Text.Encoding]::UTF8.GetBytes($html)
+        $context.Response.ContentType = "text/html; charset=utf-8"
+        $context.Response.ContentLength64 = $bytes.Length
+        $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+        $context.Response.OutputStream.Close()
 
-    do {
-        Start-Sleep -Seconds ([int]$deviceCode.interval)
-        try {
-            $token = Invoke-RestMethod -Method POST -Uri $tokenUri `
-                -Body @{
-                    grant_type = "urn:ietf:params:oauth:grant-type:device_code"
-                    client_id = $Global:PublicClientId
-                    device_code = $deviceCode.device_code
-                } `
-                -ContentType "application/x-www-form-urlencoded" `
-                -ErrorAction Stop
-            Save-PartnerCenterToken $token
-            return $token.access_token
+        if ($query["error"]) {
+            throw "Partner Center-aanmelding mislukt: $($query['error_description'])"
         }
-        catch {
-            $body = $_.ErrorDetails.Message
-            if ($body -notmatch 'authorization_pending|slow_down') {
-                throw "Partner Center-aanmelding mislukt: $body"
-            }
-        }
-    } while ($true)
+        $token = Invoke-RestMethod -Method POST -Uri $tokenUri `
+            -Body @{
+                grant_type = "authorization_code"
+                client_id = $Global:PublicClientId
+                code = $query["code"]
+                redirect_uri = $redirectUri
+                scope = $scope
+            } `
+            -ContentType "application/x-www-form-urlencoded" `
+            -ErrorAction Stop
+        Save-PartnerCenterToken $token
+        return $token.access_token
+    }
+    catch {
+        if ($_.Exception.Message -like "Partner Center-aanmelding mislukt:*") { throw }
+        throw "Partner Center-aanmelding mislukt. Controleer of Partner Center-admin consent is verleend en of redirect URI $redirectUri in de app staat. Details: $($_.Exception.Message)"
+    }
+    finally {
+        if ($listener.IsListening) { $listener.Stop() }
+        $listener.Close()
+    }
 }
 
 function Get-PartnerCenterCustomers {

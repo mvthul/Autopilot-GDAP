@@ -30,7 +30,7 @@ if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
 }
 
 Write-Host "Aanmelden op partner-tenant $PartnerTenantId..." -ForegroundColor Cyan
-az login --tenant $PartnerTenantId --use-device-code | Out-Null
+az login --tenant $PartnerTenantId | Out-Null
 $loggedInTenant = az account show --query tenantId -o tsv
 if ($loggedInTenant -ne $PartnerTenantId) {
     throw "Azure CLI is aangemeld op tenant '$loggedInTenant' in plaats van '$PartnerTenantId'."
@@ -96,11 +96,12 @@ foreach ($scopeName in $scopeNames) {
 }
 
 az ad app update --id $appObjectId --is-fallback-public-client true | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Public-client/device-code flow kon niet worden ingeschakeld." }
+if ($LASTEXITCODE -ne 0) { throw "De public-client flow kon niet worden ingeschakeld." }
 az ad app update --id $appObjectId --public-client-redirect-uris http://localhost | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "De localhost redirect URI kon niet worden ingesteld." }
 $brokerRedirect = "ms-appx-web://Microsoft.AAD.BrokerPlugin/$clientId"
-az ad app update --id $appObjectId --public-client-redirect-uris http://localhost $brokerRedirect | Out-Null
+$partnerCenterRedirect = "http://localhost:8765/"
+az ad app update --id $appObjectId --public-client-redirect-uris http://localhost $brokerRedirect $partnerCenterRedirect | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "De Windows Web Account Manager redirect URI kon niet worden ingesteld." }
 
 $previousErrorActionPreference = $ErrorActionPreference
@@ -115,7 +116,7 @@ if ($spExitCode -ne 0 -or [string]::IsNullOrWhiteSpace(($spJson -join ""))) {
 }
 
 $consentUrl = "https://login.microsoftonline.com/$PartnerTenantId/adminconsent?client_id=$clientId&redirect_uri=http%3A%2F%2Flocalhost"
-$partnerCenterConsentUrl = "https://login.microsoftonline.com/$PartnerTenantId/v2.0/adminconsent?client_id=$clientId&scope=$([uri]::EscapeDataString($partnerCenterScope))&redirect_uri=http%3A%2F%2Flocalhost"
+$partnerCenterConsentUrl = "https://login.microsoftonline.com/$PartnerTenantId/v2.0/adminconsent?client_id=$clientId&scope=$([uri]::EscapeDataString($partnerCenterScope))&redirect_uri=$([uri]::EscapeDataString($partnerCenterRedirect))"
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 az ad app permission admin-consent --id $appObjectId | Out-Null
@@ -137,5 +138,5 @@ if ($consentExitCode -ne 0) {
 Write-Host ""
 Write-Host "Open daarna deze URL voor Partner Center-klantlijst-consent:" -ForegroundColor Green
 Write-Host $partnerCenterConsentUrl
-Write-Host "De runtime-tool vraagt deze Partner Center-aanmelding anders automatisch via device code." -ForegroundColor Yellow
+Write-Host "De runtime-tool gebruikt daarna een normale browser-aanmelding via $partnerCenterRedirect; device code wordt niet gebruikt." -ForegroundColor Yellow
 Write-Host "De client-id moet daarna in Get-AutopilotGDAP.ps1 worden ingevuld op PublicClientId." -ForegroundColor Yellow
