@@ -631,7 +631,7 @@ $LoadProfilesBtn.Add_Click({
             "DeviceManagementServiceConfig.ReadWrite.All",
             "Group.Read.All",
             "GroupMember.ReadWrite.All",
-            "Organization.Read.All"
+            "Directory.Read.All"
         ) -NoWelcome -ErrorAction Stop
         
         $Profiles = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeploymentProfiles"
