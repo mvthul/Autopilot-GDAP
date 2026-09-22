@@ -638,6 +638,13 @@ $LoadProfilesBtn.Add_Click({
             "GroupMember.ReadWrite.All",
             "Directory.Read.All"
         ) -NoWelcome -ErrorAction Stop
+        $graphContext = Get-MgContext
+        Write-ToolLog "Graph-account: $($graphContext.Account)"
+        Write-ToolLog "Graph-tenant: $($graphContext.TenantId) (verwacht: $Script:TargetTenantId)"
+        Write-ToolLog "Graph-scopes: $($graphContext.Scopes -join ', ')"
+        if ([string]$graphContext.TenantId -ne [string]$Script:TargetTenantId) {
+            throw "Graph heeft de verkeerde tenantcontext geopend: $($graphContext.TenantId). Verwacht: $Script:TargetTenantId."
+        }
         
         $Profiles = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeploymentProfiles"
         $ProfileDropdown.Items.Clear()
