@@ -2,7 +2,7 @@
 .SYNOPSIS
   Autopilot GDAP GUI - Ontwikkeld voor MSP IT-Hulp met ingebouwde Admin Consent afhandeling
 #>
-$Global:PublicClientId = "14d82eec-204b-4a57-966d-513373704195"
+$Global:PublicClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
 
 # Zorg dat de MS Graph modules geladen zijn
 if (!(Get-Module -ListAvailable Microsoft.Graph.Authentication)) {
@@ -273,9 +273,9 @@ $LoadProfilesBtn.Add_Click({
                     Connect-MgGraph -ClientId "1b730954-1685-4b74-9bfd-dac224a7b894" -TenantId $Script:TargetTenantId -Scopes "Application.ReadWrite.All" -NoWelcome -ErrorAction Stop
                     
                     # Maak de Service Principal aan voor Microsoft Graph CLI
-                    $sp = Get-MgServicePrincipal -Filter "appId eq '14d82eec-204b-4a57-966d-513373704195'" -ErrorAction SilentlyContinue
+                    $sp = Get-MgServicePrincipal -Filter "appId eq '14d82eec-204b-4c2f-b7e8-296a70dab67e'" -ErrorAction SilentlyContinue
                     if (-not $sp) {
-                        New-MgServicePrincipal -AppId "14d82eec-204b-4a57-966d-513373704195" | Out-Null
+                        New-MgServicePrincipal -AppId "14d82eec-204b-4c2f-b7e8-296a70dab67e" | Out-Null
                     }
                     Disconnect-MgGraph
                 } catch {
