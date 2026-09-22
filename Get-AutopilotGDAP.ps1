@@ -151,6 +151,76 @@ $StatusTxt       = $Window.FindName("StatusTxt")
 $Script:TargetTenantId = ""
 $Script:TargetGroupId = ""
 $Script:AllContracts = [System.Collections.Generic.List[object]]::new()
+$Script:PartnerCenterAccessToken = $null
+
+function Get-PartnerCenterAccessToken {
+    $scope = "https://api.partnercenter.microsoft.com/user_impersonation offline_access"
+    $deviceCode = Invoke-RestMethod -Method POST `
+        -Uri "https://login.microsoftonline.com/organizations/oauth2/v2.0/devicecode" `
+        -Body @{ client_id = $Global:PublicClientId; scope = $scope } `
+        -ContentType "application/x-www-form-urlencoded" `
+        -ErrorAction Stop
+
+    [System.Windows.MessageBox]::Show(
+        "Eenmalige Partner Center-aanmelding vereist.`n`nOpen: $($deviceCode.verification_uri)`nCode: $($deviceCode.user_code)`n`nMeld aan met het IT-Hulp-account. Als consent wordt gevraagd, accepteer dit.",
+        "Partner Center aanmelden",
+        [System.Windows.MessageBoxButton]::OK,
+        [System.Windows.MessageBoxImage]::Information
+    ) | Out-Null
+
+    $tokenUri = "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+    do {
+        Start-Sleep -Seconds ([int]$deviceCode.interval)
+        try {
+            $token = Invoke-RestMethod -Method POST -Uri $tokenUri `
+                -Body @{
+                    grant_type = "urn:ietf:params:oauth:grant-type:device_code"
+                    client_id = $Global:PublicClientId
+                    device_code = $deviceCode.device_code
+                } `
+                -ContentType "application/x-www-form-urlencoded" `
+                -ErrorAction Stop
+            return $token.access_token
+        }
+        catch {
+            $body = $_.ErrorDetails.Message
+            if ($body -notmatch 'authorization_pending|slow_down') {
+                throw "Partner Center-aanmelding mislukt: $body"
+            }
+        }
+    } while ($true)
+}
+
+function Get-PartnerCenterCustomers {
+    if ([string]::IsNullOrWhiteSpace($Script:PartnerCenterAccessToken)) {
+        $Script:PartnerCenterAccessToken = Get-PartnerCenterAccessToken
+    }
+
+    $headers = @{ Authorization = "Bearer $Script:PartnerCenterAccessToken"; Accept = "application/json" }
+    $uri = "https://api.partnercenter.microsoft.com/v1/customers"
+    $customers = [System.Collections.Generic.List[object]]::new()
+    do {
+        $page = Invoke-RestMethod -Method GET -Uri $uri -Headers $headers -ErrorAction Stop
+        foreach ($item in @($page.items)) {
+            $profile = $item.companyProfile
+            $tenantId = [string]$profile.tenantId
+            $domain = [string]$profile.domain
+            $name = [string]$profile.companyName
+            if ([string]::IsNullOrWhiteSpace($tenantId)) { $tenantId = [string]$item.id }
+            [void]$customers.Add([pscustomobject]@{
+                displayName = "{0} [{1}] — {2}" -f $name, $domain, $tenantId
+                customerName = $name
+                tenantId = $tenantId
+                tenantDomain = $domain
+            })
+        }
+        $next = $page.links.next.uri
+        if ([string]::IsNullOrWhiteSpace([string]$next)) { $uri = $null }
+        elseif ($next -match '^https?://') { $uri = $next }
+        else { $uri = "https://api.partnercenter.microsoft.com$next" }
+    } while ($uri)
+    return @($customers | Sort-Object tenantId -Unique)
+}
 
 function Update-TenantDropdown {
     $filter = [string]$TenantSearchBox.Text.Trim()
@@ -186,34 +256,14 @@ $LogonBtn.Add_Click({
         Connect-MgGraph -ClientId $Global:PublicClientId -Scopes @(
             "Directory.Read.All"
         ) -NoWelcome -ErrorAction Stop
-        $StatusTxt.Text = "Ingelogd! Alle klantpagina's ophalen..."
-
-        $Script:AllContracts = [System.Collections.Generic.List[object]]::new()
-        $nextUri = "https://graph.microsoft.com/v1.0/contracts"
-        do {
-            $page = Invoke-MgGraphRequest -Method GET -Uri $nextUri
-            foreach ($c in @($page.value)) {
-                $tenantId = [string]$c.customerId
-                $tenantDomain = [string]$c.defaultDomainName
-                if ([string]::IsNullOrWhiteSpace($tenantId)) { $tenantId = $tenantDomain }
-                $displayText = "{0} [{1}] — {2}" -f $c.displayName, $tenantDomain, $tenantId
-                [void]$Script:AllContracts.Add([pscustomobject]@{
-                    displayName = $displayText
-                    customerName = [string]$c.displayName
-                    tenantId = $tenantId
-                    tenantDomain = $tenantDomain
-                })
-            }
-            $nextUri = $page.'@odata.nextLink'
-        } while (-not [string]::IsNullOrWhiteSpace($nextUri))
-
-        $Script:AllContracts = @($Script:AllContracts | Sort-Object tenantId -Unique)
+        $StatusTxt.Text = "Graph aangemeld. Partner Center-klanten ophalen..."
+        $Script:AllContracts = Get-PartnerCenterCustomers
         Update-TenantDropdown
         
         $TenantSearchBox.IsEnabled = $true
         $TenantDropdown.IsEnabled = $true
         $LoadProfilesBtn.IsEnabled = $true
-        $StatusTxt.Text = "Klanten geladen. Zoek op klantnaam of tenantdomein."
+        $StatusTxt.Text = "Klanten geladen vanuit Partner Center. Zoek op klantnaam of tenantdomein."
     }
     catch {
         $err = $_.Exception.Message

@@ -13,9 +13,9 @@ irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/S
 .\Setup-AutopilotApp.ps1 -PartnerTenantId "<PARTNER-TENANT-ID>"
 ```
 
-Het setupscript maakt een multi-tenant public-client app aan, configureert de delegated Graph-permissies, maakt de Enterprise Application aan en opent de admin-consentpagina. Er wordt geen client secret aangemaakt.
+Het setupscript maakt een multi-tenant public-client app aan, configureert de delegated Graph-permissies, maakt de Enterprise Application aan en toont ook de Partner Center-consentlink voor de volledige klantenlijst. Er wordt geen client secret aangemaakt.
 
-De app gebruikt `Directory.Read.All` voor het uitlezen van klantrelaties via `/contracts`; de aangemelde beheerder heeft hiervoor een ondersteunde directoryrol nodig.
+De tool gebruikt Partner Center `/v1/customers` voor de klantenlijst. Daardoor worden ook klanten zichtbaar die niet in Graph `/contracts` staan, zoals Hanab. Graph wordt daarna gebruikt voor Intune en Autopilot. De eerste keer zijn twee resource-aanmeldingen nodig: Graph en Partner Center.
 
 De huidige partner-app-client-id is al ingevuld in `Get-AutopilotGDAP.ps1`. Als je een nieuwe app aanmaakt, vervang je daar de waarde bij `PublicClientId` en publiceer je die versie. De runtime-tool vraagt op andere computers alleen nog om de IT-hulp-login.
 
@@ -33,11 +33,12 @@ irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/G
 ```
 
 4. Meld aan met het IT-hulpaccount.
-5. Gebruik het zoekveld boven de klantlijst om bijvoorbeeld `Hanab` te zoeken. De lijst wordt volledig geladen via Graph-paginering. Elke keuze toont nu de klantnaam, het primaire tenantdomein en de tenant-ID; dubbele klantnamen zijn daardoor herkenbaar.
-6. Selecteer de klanttenant en verbind met de klantcontext.
-7. Geef klantconsent wanneer de tool daarom vraagt.
-8. Selecteer het Autopilot-profiel en registreer het apparaat.
-9. Vink desgewenst aan dat het apparaat na import aan de toegewezen groep moet worden toegevoegd.
+5. Bevestig bij eerste gebruik ook de Partner Center-device-code-aanmelding.
+6. Gebruik het zoekveld boven de klantlijst om bijvoorbeeld `Hanab` te zoeken. De lijst komt uit Partner Center. Elke keuze toont nu de klantnaam, het primaire tenantdomein en de tenant-ID; dubbele klantnamen zijn daardoor herkenbaar.
+7. Selecteer de klanttenant en verbind met de klantcontext.
+8. Geef klantconsent wanneer de tool daarom vraagt.
+9. Selecteer het Autopilot-profiel en registreer het apparaat.
+10. Vink desgewenst aan dat het apparaat na import aan de toegewezen groep moet worden toegevoegd.
 
 ## Beveiliging
 

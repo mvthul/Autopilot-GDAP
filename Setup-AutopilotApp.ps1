@@ -23,6 +23,7 @@ $scopeNames = @(
     "GroupMember.ReadWrite.All",
     "Directory.Read.All"
 )
+$partnerCenterScope = "https://api.partnercenter.microsoft.com/user_impersonation"
 
 if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
     throw "Azure CLI is niet geïnstalleerd. Installeer Azure CLI en voer dit script opnieuw uit."
@@ -111,6 +112,7 @@ if ($spExitCode -ne 0 -or [string]::IsNullOrWhiteSpace(($spJson -join ""))) {
 }
 
 $consentUrl = "https://login.microsoftonline.com/$PartnerTenantId/adminconsent?client_id=$clientId&redirect_uri=http%3A%2F%2Flocalhost"
+$partnerCenterConsentUrl = "https://login.microsoftonline.com/$PartnerTenantId/v2.0/adminconsent?client_id=$clientId&scope=$([uri]::EscapeDataString($partnerCenterScope))&redirect_uri=http%3A%2F%2Flocalhost"
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 az ad app permission admin-consent --id $appObjectId | Out-Null
@@ -129,4 +131,8 @@ if ($consentExitCode -ne 0) {
 } else {
     Write-Host "Admin consent is via Azure CLI verleend." -ForegroundColor Green
 }
+Write-Host ""
+Write-Host "Open daarna deze URL voor Partner Center-klantlijst-consent:" -ForegroundColor Green
+Write-Host $partnerCenterConsentUrl
+Write-Host "De runtime-tool vraagt deze Partner Center-aanmelding anders automatisch via device code." -ForegroundColor Yellow
 Write-Host "De client-id moet daarna in Get-AutopilotGDAP.ps1 worden ingevuld op PublicClientId." -ForegroundColor Yellow
