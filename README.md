@@ -15,7 +15,7 @@ irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/7408536/Setup-Autop
 
 Het setupscript maakt een multi-tenant public-client app aan, configureert de delegated Graph-permissies, maakt de Enterprise Application aan en opent de admin-consentpagina. Er wordt geen client secret aangemaakt.
 
-Neem daarna de getoonde **Application (client) ID** over in `Get-AutopilotGDAP.ps1` bij `PublicClientId` en publiceer die versie. De runtime-tool vraagt daarna op andere computers alleen nog om de IT-hulp-login.
+De huidige partner-app-client-id is al ingevuld in `Get-AutopilotGDAP.ps1`. Als je een nieuwe app aanmaakt, vervang je daar de waarde bij `PublicClientId` en publiceer je die versie. De runtime-tool vraagt op andere computers alleen nog om de IT-hulp-login.
 
 Iedere klanttenant moet afzonderlijk admin consent geven. GDAP/PIM blijft vereist; app-consent verleent geen Intune-rol.
 

@@ -2,7 +2,7 @@
 .SYNOPSIS
   Autopilot GDAP GUI - Ontwikkeld voor MSP IT-Hulp met ingebouwde Admin Consent afhandeling
 #>
-$Global:PublicClientId = "REPLACE_WITH_IT_HELP_APP_CLIENT_ID"
+$Global:PublicClientId = "6a87f18c-ab0a-4ef9-bb1c-587ae884b8e0"
 
 if ($Global:PublicClientId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$') {
     throw "De eigen App Registration is nog niet geconfigureerd. Voer Setup-AutopilotApp.ps1 eenmalig uit en vervang PublicClientId in dit script."
@@ -19,7 +19,7 @@ Add-Type -AssemblyName PresentationFramework
 [xml]$XAML = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Autopilot GDAP Registratie" Height="700" Width="500" WindowStartupLocation="CenterScreen"
+        Title="Autopilot GDAP Registratie" Height="550" Width="500" WindowStartupLocation="CenterScreen"
         FontFamily="Segoe UI" Background="#F4F6F9">
     
     <!-- Venster Styling (Ronde hoeken etc) -->
