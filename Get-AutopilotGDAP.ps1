@@ -208,7 +208,7 @@ function Get-PartnerCenterCustomers {
             $name = [string]$profile.companyName
             if ([string]::IsNullOrWhiteSpace($tenantId)) { $tenantId = [string]$item.id }
             [void]$customers.Add([pscustomobject]@{
-                displayName = "{0} [{1}] — {2}" -f $name, $domain, $tenantId
+                displayName = ("{0} [{1}] — {2}" -f $name, $domain, $tenantId)
                 customerName = $name
                 tenantId = $tenantId
                 tenantDomain = $domain
