@@ -153,14 +153,22 @@ $Script:TargetGroupId = ""
 $Script:AllContracts = [System.Collections.Generic.List[object]]::new()
 
 function Update-TenantDropdown {
-    $filter = $TenantSearchBox.Text.Trim()
+    $filter = [string]$TenantSearchBox.Text.Trim()
     $TenantDropdown.Items.Clear()
-    $matches = $Script:AllContracts
-    if (-not [string]::IsNullOrWhiteSpace($filter)) {
-        $matches = $matches | Where-Object { $_.displayName -like "*$filter*" }
+    $matches = foreach ($tenant in @($Script:AllContracts)) {
+        $name = [string]$tenant.displayName
+        $domain = [string]$tenant.tenantId
+        if ([string]::IsNullOrWhiteSpace($filter) -or
+            $name.IndexOf($filter, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $domain.IndexOf($filter, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            $tenant
+        }
     }
-    foreach ($tenant in $matches) {
+    foreach ($tenant in @($matches)) {
         [void]$TenantDropdown.Items.Add($tenant)
+    }
+    if ($TenantSearchBox.IsEnabled) {
+        $StatusTxt.Text = "$( @($matches).Count ) klant(en) gevonden."
     }
 }
 
@@ -193,7 +201,7 @@ $LogonBtn.Add_Click({
         $TenantSearchBox.IsEnabled = $true
         $TenantDropdown.IsEnabled = $true
         $LoadProfilesBtn.IsEnabled = $true
-        $StatusTxt.Text = "Klanten geladen. Kies een klant."
+        $StatusTxt.Text = "Klanten geladen. Zoek op klantnaam of tenantdomein."
     }
     catch {
         $err = $_.Exception.Message
