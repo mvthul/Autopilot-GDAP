@@ -163,45 +163,29 @@ $LogonBtn.Add_Click({
         $StatusTxt.Text = "Klanten geladen. Kies een klant."
     } catch {
         $err = $_.Exception.Message
+    catch {
+        $err = $_.Exception.Message
         if ($err -match "canceled" -or $err -match "closed" -or $err -match "failed") {
             $res = [System.Windows.MessageBox]::Show(
-                "Inloggen was afgebroken. Heb je de inlog weggeklikt omdat je een error kreeg (zoals AADSTS700016 'Application not found')?`n`nAls je als Global Admin direct inlogde (niet je IT-hulp account), klik dan op Yes om het handmatig te repareren via de Browser.",
-                "Login afgebroken - Consent Fix?",
+                "Inloggen geannuleerd of geblokkeerd.`n`nIs dit het allereerste gebruik binnen jullie IT-Hulp tenant en bestaat de registratie nog niet?`n`nKlik 'Ja' om the App Registratie automatisch 1-malig in te richten binnen jullie Partner Tenant.`n(Let op: Log hierna in in Edge als Global Admin van IT-Hulp)",
+                "Eerste Keer Setup (IT-Hulp Tenant)",
                 [System.Windows.MessageBoxButton]::YesNo,
-                [System.Windows.MessageBoxImage]::Question
+                [System.Windows.MessageBoxImage]::Information
             )
+            
             if ($res -eq 'Yes') {
-                Add-Type -AssemblyName Microsoft.VisualBasic
-                $domein = [Microsoft.VisualBasic.Interaction]::InputBox("Wat is de hoofddomeinnaam van de tenant die weigert? (Bijv: ithulp.nu of capturetech.nl)", "Domeinnaam opgeven", "")
+                # De ultieme MAGIC URL: Dit forceert Entra ID om the app aan te maken (in de home tenant van de inlogger) én direct admin consent te vragen.
+                # Dit voorkomt de beruchte AADSTS700016 omdat we `/authorize` gebruiken in plaats van `/adminconsent`.
+                $magicUrl = "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?client_id=14d82eec-204b-4a57-966d-513373704195&response_type=code&redirect_uri=http://localhost&scope=DeviceManagementServiceConfig.ReadWrite.All%20Group.ReadWrite.All%20Organization.Read.All%20Application.Read.All&prompt=admin_consent"
+                Set-Clipboard -Value $magicUrl
                 
-                if ([string]::IsNullOrWhiteSpace($domein)) {
-                    $StatusTxt.Text = "Reparatie afgebroken. Geen domein opgegeven."
-                } else {
-                    $StatusTxt.Text = "Tenant ID ophalen voor $domein..."
-                    try {
-                        # We reverse-engineeren het onbekende Tenant ID via de publieke OpenID endpoint (Geen login vereist!)
-                        $openIdConfig = Invoke-RestMethod -Uri "https://login.microsoftonline.com/$domein/v2.0/.well-known/openid-configuration" -ErrorAction Stop
-                        # De token endpoint bevat de GUID: https://login.microsoftonline.com/26aaae92-5737-48a2-b00c-27aff5b013e7/oauth2/v2.0/token
-                        if ($openIdConfig.token_endpoint -match "login.microsoftonline.com/([a-fA-F0-9\-]+)/") {
-                            $realTenantId = $matches[1]
-                            
-                            $specificUrl = "https://login.microsoftonline.com/$realTenantId/adminconsent?client_id=14d82eec-204b-4a57-966d-513373704195"
-                            Set-Clipboard -Value $specificUrl
-                            
-                            try {
-                                Start-Process "msedge.exe" -ArgumentList $specificUrl -ErrorAction Stop
-                                $StatusTxt.Text = "Reparatie gelukt! Browser geopend voor 1-malig consent."
-                            } catch {
-                                [System.Windows.MessageBox]::Show("Toegang tot Edge mislukt. De exacte link staat op je klembord (Ctrl+V).`n`nLink: $specificUrl")
-                                $StatusTxt.Text = "Link gekopieerd. Graag accepteren via beheerder."
-                            }
-                        } else {
-                            throw "Kan Tenant ID niet filteren."
-                        }
-                    } catch {
-                        [System.Windows.MessageBox]::Show("Domein '$domein' niet gevonden of onjuist. Fout: $_")
-                        $StatusTxt.Text = "Reparatie mislukt."
-                    }
+                try {
+                    Start-Process "msedge.exe" -ArgumentList $magicUrl -ErrorAction Stop
+                    [System.Windows.MessageBox]::Show("Edge is geopend!`n`n1. Log in als Global Admin van IT-Hulp.`n2. Klik op 'Accepteren' bij de blauwe prompt.`n3. Zodra je een witte pagina krijgt ('localhost refuse to connect'), kun je Edge sluiten.`n4. De inrichting is dan geslaagd!", "Instructie")
+                    $StatusTxt.Text = "App inrichting gelanceerd in browser."
+                } catch {
+                    [System.Windows.MessageBox]::Show("Edge kon niet geopend worden. De setup-link is gekopieerd naar je klembord (Ctrl+V).`n`nPlak hem in een browser en accepteer de prompt als Global Admin.", "Klembord")
+                    $StatusTxt.Text = "Setup link gekopieerd."
                 }
             } else {
                 $StatusTxt.Text = "Login afgebroken door gebruiker."
