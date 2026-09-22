@@ -54,14 +54,6 @@ foreach ($scopeName in $scopeNames) {
     $resourceAccess += @{ id = $scopeMap[$scopeName]; type = "Scope" }
 }
 
-$requiredAccessObject = @(@{
-    resourceAppId  = $graphAppId
-    resourceAccess = $resourceAccess
-})
-$manifestPath = Join-Path $env:TEMP ("autopilot-required-access-" + [guid]::NewGuid().ToString("N") + ".json")
-ConvertTo-Json -InputObject $requiredAccessObject -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
-$manifestArgument = "@$manifestPath"
-
 $existingJson = az ad app list --all --query "[?displayName=='$DisplayName']" -o json
 if ($LASTEXITCODE -ne 0) {
     throw "Bestaande appregistraties konden niet worden opgehaald."
@@ -91,8 +83,17 @@ if ($existing) {
     }
 }
 
-az ad app update --id $appObjectId --required-resource-accesses $manifestArgument | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Graph-permissies konden niet aan de app worden toegevoegd." }
+Write-Host "Graph-permissies instellen..." -ForegroundColor Cyan
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+az ad app permission delete --id $appObjectId --api $graphAppId 2>$null | Out-Null
+$ErrorActionPreference = $previousErrorActionPreference
+foreach ($scopeName in $scopeNames) {
+    $permission = "$($scopeMap[$scopeName])=Scope"
+    az ad app permission add --id $appObjectId --api $graphAppId --api-permissions $permission | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Graph-permissie '$scopeName' kon niet worden toegevoegd." }
+}
+
 az ad app update --id $appObjectId --is-fallback-public-client true | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Public-client/device-code flow kon niet worden ingeschakeld." }
 
@@ -108,6 +109,11 @@ if ($spExitCode -ne 0 -or [string]::IsNullOrWhiteSpace(($spJson -join ""))) {
 }
 
 $consentUrl = "https://login.microsoftonline.com/$PartnerTenantId/adminconsent?client_id=$clientId&redirect_uri=http%3A%2F%2Flocalhost"
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+az ad app permission admin-consent --id $appObjectId | Out-Null
+$consentExitCode = $LASTEXITCODE
+$ErrorActionPreference = $previousErrorActionPreference
 Write-Host "" 
 Write-Host "Klaar. Client ID:" -ForegroundColor Green
 Write-Host $clientId
@@ -115,5 +121,10 @@ Write-Host ""
 Write-Host "Open deze URL als Global Administrator om partner-consent te bevestigen:" -ForegroundColor Green
 Write-Host $consentUrl
 Set-Clipboard -Value $consentUrl -ErrorAction SilentlyContinue
-Start-Process $consentUrl -ErrorAction SilentlyContinue
+if ($consentExitCode -ne 0) {
+    Write-Host "Automatische consent is niet gelukt; open de getoonde URL als Global Administrator." -ForegroundColor Yellow
+    Start-Process $consentUrl -ErrorAction SilentlyContinue
+} else {
+    Write-Host "Admin consent is via Azure CLI verleend." -ForegroundColor Green
+}
 Write-Host "De client-id moet daarna in Get-AutopilotGDAP.ps1 worden ingevuld op PublicClientId." -ForegroundColor Yellow
