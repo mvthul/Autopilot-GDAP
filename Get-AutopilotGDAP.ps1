@@ -164,7 +164,7 @@ $StatusTxt       = $Window.FindName("StatusTxt")
 $Script:TargetTenantId = ""
 $Script:AllContracts = [System.Collections.Generic.List[object]]::new()
 $Script:PartnerCenterAccessToken = $null
-$Script:PartnerCenterTokenPath = Join-Path $(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:TEMP }) "CaptureTech\AutopilotGDAP\partnercenter.token"
+$Script:PartnerCenterTokenPath = Join-Path $(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:TEMP }) "CaptureTech\AutopilotGDAP\partnercenter.v1.token"
 
 function Save-PartnerCenterToken {
     param([object]$Token)
@@ -189,8 +189,8 @@ function Get-CachedPartnerCenterToken {
 }
 
 function Get-PartnerCenterAccessToken {
-    $scope = "https://api.partnercenter.microsoft.com/user_impersonation offline_access"
-    $tokenUri = "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+    $partnerCenterResource = "https://api.partnercenter.microsoft.com"
+    $tokenUri = "https://login.microsoftonline.com/organizations/oauth2/token"
 
     $cached = Get-CachedPartnerCenterToken
     if ($cached) {
@@ -200,7 +200,7 @@ function Get-PartnerCenterAccessToken {
                     grant_type = "refresh_token"
                     client_id = $Global:PublicClientId
                     refresh_token = $cached.refresh_token
-                    scope = $scope
+                    resource = $partnerCenterResource
                 } `
                 -ContentType "application/x-www-form-urlencoded" `
                 -ErrorAction Stop
@@ -227,7 +227,7 @@ function Get-PartnerCenterAccessToken {
     }
 
     try {
-        $authorizeUri = "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?client_id=$([uri]::EscapeDataString($Global:PublicClientId))&response_type=code&redirect_uri=$([uri]::EscapeDataString($redirectUri))&response_mode=query&scope=$([uri]::EscapeDataString($scope))&prompt=select_account"
+        $authorizeUri = "https://login.microsoftonline.com/organizations/oauth2/authorize?client_id=$([uri]::EscapeDataString($Global:PublicClientId))&response_type=code&redirect_uri=$([uri]::EscapeDataString($redirectUri))&response_mode=query&resource=$([uri]::EscapeDataString($partnerCenterResource))&prompt=select_account"
         Start-Process $authorizeUri -ErrorAction Stop
         $asyncResult = $listener.BeginGetContext($null, $null)
         if (-not $asyncResult.AsyncWaitHandle.WaitOne(300000)) {
@@ -255,7 +255,7 @@ function Get-PartnerCenterAccessToken {
                 client_id = $Global:PublicClientId
                 code = $query["code"]
                 redirect_uri = $redirectUri
-                scope = $scope
+                resource = $partnerCenterResource
             } `
             -ContentType "application/x-www-form-urlencoded" `
             -ErrorAction Stop
@@ -277,11 +277,24 @@ function Get-PartnerCenterCustomers {
         $Script:PartnerCenterAccessToken = Get-PartnerCenterAccessToken
     }
 
-    $headers = @{ Authorization = "Bearer $Script:PartnerCenterAccessToken"; Accept = "application/json" }
+    $headers = @{
+        Authorization = "Bearer $Script:PartnerCenterAccessToken"
+        Accept = "application/json"
+        "MS-RequestId" = [guid]::NewGuid().ToString()
+        "MS-CorrelationId" = [guid]::NewGuid().ToString()
+        "MS-Contract-Version" = "v1"
+    }
     $uri = "https://api.partnercenter.microsoft.com/v1/customers"
     $customers = [System.Collections.Generic.List[object]]::new()
     do {
-        $page = Invoke-RestMethod -Method GET -Uri $uri -Headers $headers -ErrorAction Stop
+        try {
+            $page = Invoke-RestMethod -Method GET -Uri $uri -Headers $headers -ErrorAction Stop
+        }
+        catch {
+            $detail = $_.ErrorDetails.Message
+            if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
+            throw "Partner Center-klantenlijst ophalen mislukt ($uri): $detail"
+        }
         foreach ($item in @($page.items)) {
             $profile = $item.companyProfile
             $tenantId = [string]$profile.tenantId
