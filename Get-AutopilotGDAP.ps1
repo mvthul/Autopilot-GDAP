@@ -241,22 +241,36 @@ $LoadProfilesBtn.Add_Click({
         # Scenario 2: User heeft de login weggeklikt omdat hij AADSTS700016 kreeg of App Niet gevonden
         } elseif ($err -match "canceled" -or $err -match "closed" -or $err -match "failed") {
             $res = [System.Windows.MessageBox]::Show(
-                "Inloggen was afgebroken of geblokkeerd.`n`nZag je de foutmelding 'AADSTS700016 (Application not found)' in het login scherm?`n`nDit betekent dat de Graph App nog nooit is goedgekeurd in deze tenant. Wil je nu de Admin Consent pagina openen? (Een Global Admin login is vereist om dit eenmalig in te regelen).",
-                "App Niet Gevonden (Consent Fix)",
+                "Inloggen was afgebroken of geblokkeerd.`n`nZag je de foutmelding 'AADSTS700016 (Application not found)' in het login scherm?`n`nDit betekent dat de Graph App (nog) niet bestaat in deze tenant. Wil je dit nu automatisch repareren? (Global Admin login vereist)",
+                "Kip en Ei probleem - Consent Fix",
                 [System.Windows.MessageBoxButton]::YesNo,
                 [System.Windows.MessageBoxImage]::Question
             )
             if ($res -eq 'Yes') {
+                $StatusTxt.Text = "App injecteren via AzureAD PowerShell..."
+                try {
+                    # TROJAN HORSE: We loggen in via de ingebouwde klassieke Azure AD app die wél globaal bestaat, wegens een kip-en-ei probleem.
+                    Connect-MgGraph -ClientId "1b730954-1685-4b74-9bfd-dac224a7b894" -TenantId $Script:TargetTenantId -Scopes "Application.ReadWrite.All" -NoWelcome -ErrorAction Stop
+                    
+                    # Maak de Service Principal aan voor Microsoft Graph CLI
+                    $sp = Get-MgServicePrincipal -Filter "appId eq '14d82eec-204b-4a57-966d-513373704195'" -ErrorAction SilentlyContinue
+                    if (-not $sp) {
+                        New-MgServicePrincipal -AppId "14d82eec-204b-4a57-966d-513373704195" | Out-Null
+                    }
+                    Disconnect-MgGraph
+                } catch {
+                    [System.Windows.MessageBox]::Show("Auto-injectie Mislukt. Geen rechten of de login is dichtgeklikt. Fout: $_", "Let op", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
+                }
+
                 $consentUrl = "https://login.microsoftonline.com/$Script:TargetTenantId/adminconsent?client_id=14d82eec-204b-4a57-966d-513373704195"
                 Set-Clipboard -Value $consentUrl
                 
                 try {
-                    # In OOBE werkt de standaard https overdracht soms niet, we forceren MS Edge:
                     Start-Process -FilePath "msedge.exe" -ArgumentList $consentUrl -ErrorAction Stop
-                    $StatusTxt.Text = "Browser geopend voor Consent. Klik hierna opnieuw op Verbinden!"
+                    $StatusTxt.Text = "Browser geopend voor eenmalig Consent! Klik daarna weer op Verbinden."
                 } catch {
-                    [System.Windows.MessageBox]::Show("Let op: Omdat je in Windows Setup (OOBE) zit, kan Edge mogelijk niet openen.`n`nDe link is succesvol naar je klembord (clipboard) gekopieerd.`n`nPlak hem in Kladblok (type 'notepad' in het zwarte venster) of typ/stuur hem naar je eigen laptop om akkoord te geven!`n`n(URL: $consentUrl)", "Handmatige Actie", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
-                    $StatusTxt.Text = "Link gekopieerd. Graag accepteren via een andere pc."
+                    [System.Windows.MessageBox]::Show("Link staat op je klembord (Ctrl+V).`n`nOpen hem om eenmalig goedkeuring te geven!`n`nLink: $consentUrl", "Handmatige Actie")
+                    $StatusTxt.Text = "Link gekopieerd. Graag accepteren via beheerder."
                 }
             } else {
                 $StatusTxt.Text = "Selectie afgebroken."
