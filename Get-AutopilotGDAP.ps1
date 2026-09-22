@@ -205,44 +205,35 @@ $LoadProfilesBtn.Add_Click({
         $DeployBtn.IsEnabled = $true
         $StatusTxt.Text = "Profielen geladen voor $TargetName! Klaar voor registratie."
     } catch {
-        # Automatische Admin Consent Afhandeling
-        $errorMessage = $_.Exception.Message
-        if ($errorMessage -match "AADSTS700016" -or $errorMessage -match "AADSTS650052" -or $errorMessage -match "unauthorized") {
-            $consentUrl = "https://login.microsoftonline.com/$Script:TargetTenantId/adminconsent?client_id=14d82eec-204b-4a57-966d-513373704195"
-            
-            # Automatische "Injectie" van de Service Principal
-            # Dit voorkomt de foutmelding in het consent-scherm
-            try {
-                $StatusTxt.Text = "App registreren in Klant Tenant..."
-                # Tijdelijke sessie stiekem openen met App.ReadWrite.All om de lege huls aan te maken
-                Connect-MgGraph -ClientId $Global:PublicClientId -TenantId $Script:TargetTenantId -Scopes "Application.ReadWrite.All" -NoWelcome
-                
-                # Check of hij bestaat, zo nee, maak aan
-                $sp = Get-MgServicePrincipal -Filter "appId eq '14d82eec-204b-4a57-966d-513373704195'" -ErrorAction SilentlyContinue
-                if (-not $sp) {
-                    New-MgServicePrincipal -AppId "14d82eec-204b-4a57-966d-513373704195" | Out-Null
-                }
-                
-                # We verbreken deze tijdelijke sessie zodat we schoon blijven
-                Disconnect-MgGraph
-            } catch {
-                # Mocht dit falen om GDAP privilege redenen, gaat het script gewoon door, want soms kan hij het alsnog
-            }
-
-            $StatusTxt.Text = "Eenmalige Admin Consent vereist voor $TargetName!"
-            
-            [System.Windows.MessageBox]::Show(
-                "Microsoft Graph Command Line Tools heeft nog geen goedkeuring voor de tenant van $TargetName.`n`nWe hebben de applicatie geregistreerd op de achtergrond. Nu moet een beheerder (Global Admin) éénmalig accorderen.`n`nDe link is gekopieerd naar je klembord. We proberen deze nu te openen. Klik daarna in deze tool opnieuw op 'Verbinden'!", 
-                "Admin Consent Vereist", 
-                [System.Windows.MessageBoxButton]::OK, 
-                [System.Windows.MessageBoxImage]::Warning
+        $err = $_.Exception.Message
+        
+        # Scenario 1: Rechten probleem (Geen PIM geactiveerd)
+        if ($err -match "Forbidden" -or $err -match "Authorization_RequestDenied" -or $err -match "403") {
+             [System.Windows.MessageBox]::Show(
+                "Toegang geweigerd (403 Forbidden).`n`nJe hebt geen rechten om Autopilot informatie in te zien in de tenant van $TargetName.`n`nOplossing: Controleer of je jouw PIM rol (GDAP Intune Administrator) wel actief hebt voor deze klant in jullie Partner Portal!",
+                "Geen GDAP/PIM Rechten",
+                [System.Windows.MessageBoxButton]::OK,
+                [System.Windows.MessageBoxImage]::Error
             )
-
-            Set-Clipboard -Value $consentUrl
-            Start-Process -FilePath $consentUrl -ErrorAction SilentlyContinue
-
+            $StatusTxt.Text = "Geen toegang. Activeer je PIM rollen."
+        # Scenario 2: User heeft de login weggeklikt omdat hij AADSTS700016 kreeg
+        } elseif ($err -match "canceled" -or $err -match "closed" -or $err -match "failed") {
+            $res = [System.Windows.MessageBox]::Show(
+                "Inloggen was afgebroken of geblokkeerd.`n`nZag je de foutmelding 'AADSTS700016 (Application not found)' in het login scherm?`n`nDit betekent dat de Graph App nog nooit is goedgekeurd in deze tenant. Wil je nu de Admin Consent pagina openen? (Een Global Admin login is vereist om dit eenmalig in te regelen).",
+                "App Niet Gevonden (Consent Fix)",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Question
+            )
+            if ($res -eq 'Yes') {
+                $consentUrl = "https://login.microsoftonline.com/$Script:TargetTenantId/adminconsent?client_id=14d82eec-204b-4a57-966d-513373704195"
+                Set-Clipboard -Value $consentUrl
+                Start-Process -FilePath $consentUrl -ErrorAction SilentlyContinue
+                $StatusTxt.Text = "Browser geopend voor Consent. Klik hierna opnieuw op Verbinden!"
+            } else {
+                $StatusTxt.Text = "Selectie afgebroken."
+            }
         } else {
-            $StatusTxt.Text = "Fout bij Tenant Access: $_"
+            $StatusTxt.Text = "Fout: $err"
         }
     }
     $LoadProfilesBtn.IsEnabled = $true
