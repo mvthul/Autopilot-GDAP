@@ -177,7 +177,7 @@ $LogonBtn.Add_Click({
                 # worden aangemaakt. De tenant-admin moet de bestaande app eenmalig consent geven.
                 # Admin consent gebruikt een eigen endpoint; prompt=admin_consent op
                 # /oauth2/v2.0/authorize geeft AADSTS901001.
-                $consentUrl = "https://login.microsoftonline.com/organizations/v2.0/adminconsent?client_id=$Global:PublicClientId&redirect_uri=http%3A%2F%2Flocalhost"
+                $consentUrl = "https://login.microsoftonline.com/organizations/v2.0/adminconsent?client_id=$Global:PublicClientId&scope=https%3A%2F%2Fgraph.microsoft.com%2F.default&redirect_uri=http%3A%2F%2Flocalhost"
                 
                 try {
                     Set-Clipboard -Value $consentUrl -ErrorAction SilentlyContinue
@@ -276,7 +276,7 @@ $LoadProfilesBtn.Add_Click({
                     [System.Windows.MessageBox]::Show("Auto-injectie Mislukt. Geen rechten of de login is dichtgeklikt. Fout: $_", "Let op", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
                 }
 
-                $consentUrl = "https://login.microsoftonline.com/$Script:TargetTenantId/v2.0/adminconsent?client_id=$Global:PublicClientId&redirect_uri=http%3A%2F%2Flocalhost"
+                $consentUrl = "https://login.microsoftonline.com/$Script:TargetTenantId/v2.0/adminconsent?client_id=$Global:PublicClientId&scope=https%3A%2F%2Fgraph.microsoft.com%2F.default&redirect_uri=http%3A%2F%2Flocalhost"
                 Set-Clipboard -Value $consentUrl
                 
                 try {
