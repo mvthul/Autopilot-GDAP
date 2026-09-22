@@ -59,7 +59,7 @@ $requiredAccessObject = @(@{
     resourceAccess = $resourceAccess
 })
 $manifestPath = Join-Path $env:TEMP ("autopilot-required-access-" + [guid]::NewGuid().ToString("N") + ".json")
-$requiredAccessObject | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+ConvertTo-Json -InputObject $requiredAccessObject -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 $manifestArgument = "@$manifestPath"
 
 $existingJson = az ad app list --all --query "[?displayName=='$DisplayName']" -o json
