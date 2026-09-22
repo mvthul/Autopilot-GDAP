@@ -19,22 +19,17 @@ Start een computer op (uit de doos) en wacht tot je in het allereerste Windows w
 4. Voer het volgende snelle installatiecommando in:
 
 ```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; irma https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/main/Get-AutopilotGDAP.ps1 | iex
+Set-ExecutionPolicy Bypass -Scope Process -Force; irm https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/main/Get-AutopilotGDAP.ps1 | iex
 ```
-
-*(Tip: Bovenstaande `irma` pakt het script direct vanaf internet zonder dat een USB stick vereist is).*
 
 ## Wat gebeurt er dan?
 
-1. De WPF interface opent.
+1. De WPF interface opent in de CaptureTech huisstijl.
 2. Klik op **1. Log in met IT-Hulp Account**. Log in met je Partner werkaccount.
-3. De lijst met al jullie tenants/klanten verschijnt. Selecteer de juiste klant (bijv. *CaptureTech*).
+3. De lijst met al jullie tenants/klanten verschijnt. Selecteer de juiste klant (bijv. *CaptureTech* of *ValueBlue*).
 4. Klik op **2. Verbind met Klant**.
-   * *Edge Case:* Mocht dit de allereerste keer zijn bij deze specifieke klant, dan zal de browser zich openen en vragen om een Admin goedkeuring. Laat eventueel een Global Admin deze éénmalig per klant aftekenen. Klik hierna gewoon nogmaals op de knop!
-5. Kies het juiste Autopilot-profiel (standaard of kiosk etc.).
+   * *Edge Case:* Mocht dit de allereerste keer zijn bij deze specifieke klant, dan zal de browser zich openen en vragen om een Admin goedkeuring. Laat een Global Admin deze éénmalig per klant aftekenen. Klik hierna gewoon nogmaals op de knop!
+5. Kies het juiste Autopilot-profiel.
 6. Klik op **3. Registreer dit apparaat**.
 
 De tool vraagt lokaal de unieke Hardware Hash (WMI) op, uploadt deze veilig naar Intune via de Graph API, verzoekt een synchronisatie en geeft de computer een seintje als het gereed is. Rebooten en Autopilot neemt het over!
-
----
-_Disclaimer: Dit script is ontwikkeld als snelle community-oplossing en maakt gebruik van de officiële Microsoft.Graph modules._

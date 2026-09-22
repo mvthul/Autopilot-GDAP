@@ -15,27 +15,77 @@ Add-Type -AssemblyName PresentationFramework
 [xml]$XAML = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Autopilot GDAP Tool" Height="480" Width="420" WindowStartupLocation="CenterScreen">
-    <Grid Margin="15">
-        <StackPanel>
-            <TextBlock Text="Team 1 - Autopilot GDAP Tool" FontSize="18" FontWeight="Bold" Margin="0,0,0,15"/>
-            
-            <Button Name="LogonBtn" Content="1. Log in met IT-Hulp Account" Height="30" Margin="0,0,0,10" Background="#0078D7" Foreground="White" FontWeight="Bold"/>
-            
-            <TextBlock Text="Klant Tenant:" FontSize="12" Margin="0,0,0,2"/>
-            <ComboBox Name="TenantDropdown" Height="25" IsEnabled="False" Margin="0,0,0,10" DisplayMemberPath="displayName" />
-            
-            <Button Name="LoadProfilesBtn" Content="2. Verbind met Klant en zoek Profielen" Height="30" IsEnabled="False" Margin="0,0,0,10"/>
-            
-            <TextBlock Text="Selecteer Profiel (en Toegewezen Groep):" FontSize="12" Margin="0,0,0,2"/>
-            <ComboBox Name="ProfileDropdown" Height="25" IsEnabled="False" Margin="0,0,0,10" DisplayMemberPath="displayName" />
-            
-            <TextBlock Text="Device Hostname (Optioneel):" FontSize="12" Margin="0,0,0,2"/>
-            <TextBox Name="HostnameBox" Height="25" IsEnabled="False" Margin="0,0,0,10"/>
+        Title="Autopilot GDAP Registratie" Height="550" Width="450" WindowStartupLocation="CenterScreen"
+        FontFamily="Segoe UI" Background="#F4F6F9">
+    
+    <!-- Venster Styling (Ronde hoeken etc) -->
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#00355f" />
+            <Setter Property="Foreground" Value="White" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="10,5" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#00b0ca" />
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#cccccc" />
+                    <Setter Property="Foreground" Value="#777777" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Padding" Value="5" />
+            <Setter Property="BorderBrush" Value="#cccccc" />
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Padding" Value="5" />
+            <Setter Property="BorderBrush" Value="#cccccc" />
+        </Style>
+    </Window.Resources>
 
-            <Button Name="DeployBtn" Content="3. Registreer dit apparaat aan Klant" Height="40" IsEnabled="False" Background="#107C10" Foreground="White" FontWeight="Bold"/>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Header met CaptureTech "Logo" Stijl -->
+        <Border Grid.Row="0" Background="#00355f" Padding="20">
+            <Grid>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                    <TextBlock Text="C A P T U R E " Foreground="White" FontSize="24" FontWeight="Bold" />
+                    <TextBlock Text="T E C H" Foreground="#00b0ca" FontSize="24" FontWeight="Bold" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Formulier / StackPanel -->
+        <StackPanel Grid.Row="1" Margin="25">
+            <TextBlock Text="Autopilot Deployment Tool" FontSize="18" FontWeight="Light" Foreground="#00355f" Margin="0,0,0,20" HorizontalAlignment="Center" />
             
-            <TextBlock Name="StatusTxt" Text="Klik op Inloggen..." Margin="0,15,0,0" Foreground="#555555" TextWrapping="Wrap"/>
+            <Button Name="LogonBtn" Content="1. Log in met IT-Hulp Account" Height="35" Margin="0,0,0,15" />
+            
+            <TextBlock Text="Klant Tenant:" FontSize="13" Foreground="#333333" Margin="0,0,0,4"/>
+            <ComboBox Name="TenantDropdown" Height="30" IsEnabled="False" Margin="0,0,0,15" DisplayMemberPath="displayName" />
+            
+            <Button Name="LoadProfilesBtn" Content="2. Verbind met Klant &amp; Zoek Profielen" Height="35" IsEnabled="False" Margin="0,0,0,15" />
+            
+            <TextBlock Text="Selecteer Profiel (en toegewezen groep):" FontSize="13" Foreground="#333333" Margin="0,0,0,4"/>
+            <ComboBox Name="ProfileDropdown" Height="30" IsEnabled="False" Margin="0,0,0,15" DisplayMemberPath="displayName" />
+            
+            <TextBlock Text="Device Hostname (Optioneel):" FontSize="13" Foreground="#333333" Margin="0,0,0,4"/>
+            <TextBox Name="HostnameBox" Height="30" IsEnabled="False" Margin="0,0,0,25"/>
+
+            <!-- Primaire Actie Knop gestylet in de Cyaan kleur -->
+            <Button Name="DeployBtn" Content="3. Registreer Apparaat" Height="45" FontSize="15" IsEnabled="False" Background="#00b0ca" />
+            
+            <Border Background="#ffffff" BorderBrush="#dddddd" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,20,0,0">
+                <TextBlock x:Name="StatusTxt" Text="Klaar voor aanmelding..." Foreground="#555555" TextWrapping="Wrap" TextAlignment="Center" />
+            </Border>
         </StackPanel>
     </Grid>
 </Window>
