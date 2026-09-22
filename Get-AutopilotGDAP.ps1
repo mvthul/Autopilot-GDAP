@@ -624,11 +624,14 @@ $LoadProfilesBtn.Add_Click({
     $LoadProfilesBtn.IsEnabled = $false
     
     try {
+        # Force a clean tenant switch. Partner Center uses its own token, so
+        # the partner Graph context is not needed while reading the customer.
+        Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
         Connect-MgGraph -ClientId $Global:PublicClientId -TenantId $Script:TargetTenantId -Scopes @(
             "DeviceManagementServiceConfig.ReadWrite.All",
-            "DeviceManagementServiceConfig.Read.All",
             "Group.Read.All",
-            "GroupMember.ReadWrite.All"
+            "GroupMember.ReadWrite.All",
+            "Organization.Read.All"
         ) -NoWelcome -ErrorAction Stop
         
         $Profiles = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeploymentProfiles"
@@ -648,7 +651,9 @@ $LoadProfilesBtn.Add_Click({
         Update-GroupDecisionText
         $StatusTxt.Text = "Profielen geladen voor $TargetName! Klaar voor registratie."
     } catch {
-        $err = $_.Exception.Message
+        $err = $_.ErrorDetails.Message
+        if ([string]::IsNullOrWhiteSpace($err)) { $err = $_.Exception.Message }
+        if ([string]::IsNullOrWhiteSpace($err)) { $err = ($_ | Out-String).Trim() }
         
         # Scenario 1: Rechten probleem (Geen PIM geactiveerd)
         if ($err -match "Forbidden" -or $err -match "Authorization_RequestDenied" -or $err -match "403") {
