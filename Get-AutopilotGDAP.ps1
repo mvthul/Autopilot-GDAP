@@ -148,7 +148,10 @@ $LogonBtn.Add_Click({
     $StatusTxt.Text = "Bezig met inloggen op algemeen partner profiel..."
     $LogonBtn.IsEnabled = $false
     try {
-        Connect-MgGraph -ClientId $Global:PublicClientId -Scopes "Organization.Read.All, Application.Read.All" -NoWelcome -ErrorAction Stop
+        Connect-MgGraph -ClientId $Global:PublicClientId -Scopes @(
+            "Organization.Read.All",
+            "Application.Read.All"
+        ) -NoWelcome -ErrorAction Stop
         $StatusTxt.Text = "Ingelogd! Contracten ophalen..."
         
         $Contracts = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/contracts"
@@ -212,7 +215,10 @@ $LoadProfilesBtn.Add_Click({
     $LoadProfilesBtn.IsEnabled = $false
     
     try {
-        Connect-MgGraph -ClientId $Global:PublicClientId -TenantId $Script:TargetTenantId -Scopes "DeviceManagementServiceConfig.ReadWrite.All, Group.ReadWrite.All" -NoWelcome -ErrorAction Stop
+        Connect-MgGraph -ClientId $Global:PublicClientId -TenantId $Script:TargetTenantId -Scopes @(
+            "DeviceManagementServiceConfig.ReadWrite.All",
+            "Group.ReadWrite.All"
+        ) -NoWelcome -ErrorAction Stop
         
         $Profiles = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeploymentProfiles"
         $ProfileDropdown.Items.Clear()
