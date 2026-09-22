@@ -309,7 +309,7 @@ function Get-PartnerCenterCustomers {
             $name = [string]$profile.companyName
             if ([string]::IsNullOrWhiteSpace($tenantId)) { $tenantId = [string]$item.id }
             [void]$customers.Add([pscustomobject]@{
-                displayName = ("{0} [{1}] — {2}" -f $name, $domain, $tenantId)
+                displayName = ("{0} [{1}] - {2}" -f $name, $domain, $tenantId)
                 customerName = $name
                 tenantId = $tenantId
                 tenantDomain = $domain
@@ -428,11 +428,11 @@ function Get-LocalSerialNumber {
 function Get-DirectoryDeviceObjectId {
     param([Parameter(Mandatory = $true)][string]$SerialNumber)
     $escapedSerial = $SerialNumber.Replace("'", "''")
-    $uri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?%24filter=serialNumber eq '$escapedSerial'&%24select=azureActiveDirectoryDeviceId"
+    $uri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?%24filter=serialNumber eq '$escapedSerial'"
     $autopilot = @(Get-GraphCollection -Uri $uri | Select-Object -First 1)
     $aadDeviceId = [string]$autopilot.azureActiveDirectoryDeviceId
     if ([string]::IsNullOrWhiteSpace($aadDeviceId)) { return $null }
-    $deviceUri = "https://graph.microsoft.com/v1.0/devices?%24filter=deviceId eq '$aadDeviceId'&%24select=id,displayName"
+    $deviceUri = "https://graph.microsoft.com/v1.0/devices?%24filter=deviceId eq '$aadDeviceId'"
     return [string](@(Get-GraphCollection -Uri $deviceUri | Select-Object -First 1).id)
 }
 
@@ -578,7 +578,7 @@ function Update-GroupDecisionText {
         "- $($group.name): $kind$suffix$rule"
     }
     $staticCount = @($groups | Where-Object { -not $_.isDynamic -and -not $_.isExclusion }).Count
-    $action = if ($staticCount -gt 0) { "Statische groepen worden automatisch via -AddToGroup verwerkt." } else { "Geen -AddToGroup; dynamische groepen worden door Entra geëvalueerd." }
+    $action = if ($staticCount -gt 0) { "Statische groepen worden automatisch via -AddToGroup verwerkt." } else { "Geen -AddToGroup; dynamische groepen worden door Entra geevalueerd." }
     $GroupDecisionTxt.Text = (($lines -join "`n") + "`n`n" + $action)
 }
 
