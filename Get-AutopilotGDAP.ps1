@@ -347,7 +347,8 @@ function Connect-BrowserGraph {
     )
     $accessToken = Get-BrowserGraphAccessToken -TenantId $TenantId -Scopes $Scopes
     $secureToken = ConvertTo-SecureString $accessToken -AsPlainText -Force
-    Connect-MgGraph -AccessToken $secureToken -ContextScope Process -NoWelcome -ErrorAction Stop
+    Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
+    Connect-MgGraph -AccessToken $secureToken -ErrorAction Stop
 }
 
 function Get-PartnerCenterCustomers {
