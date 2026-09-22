@@ -148,7 +148,7 @@ $LogonBtn.Add_Click({
     $StatusTxt.Text = "Bezig met inloggen op algemeen partner profiel..."
     $LogonBtn.IsEnabled = $false
     try {
-        Connect-MgGraph -ClientId $Global:PublicClientId -Scopes "Organization.Read.All, Application.Read.All" -NoWelcome
+        Connect-MgGraph -ClientId $Global:PublicClientId -Scopes "Organization.Read.All, Application.Read.All" -NoWelcome -ErrorAction Stop
         $StatusTxt.Text = "Ingelogd! Contracten ophalen..."
         
         $Contracts = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/contracts"
@@ -162,7 +162,7 @@ $LogonBtn.Add_Click({
         $LoadProfilesBtn.IsEnabled = $true
         $StatusTxt.Text = "Klanten geladen. Kies een klant."
     } catch {
-        $StatusTxt.Text = "Mislukt: $_"
+        $StatusTxt.Text = "Login Mislukt. Zorg dat je de juiste IT-Hulp credentials gebruikt."
     }
     $LogonBtn.IsEnabled = $true
 })
@@ -176,7 +176,7 @@ $LoadProfilesBtn.Add_Click({
     $LoadProfilesBtn.IsEnabled = $false
     
     try {
-        Connect-MgGraph -ClientId $Global:PublicClientId -TenantId $Script:TargetTenantId -Scopes "DeviceManagementServiceConfig.ReadWrite.All, Group.ReadWrite.All" -NoWelcome
+        Connect-MgGraph -ClientId $Global:PublicClientId -TenantId $Script:TargetTenantId -Scopes "DeviceManagementServiceConfig.ReadWrite.All, Group.ReadWrite.All" -NoWelcome -ErrorAction Stop
         
         $Profiles = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeploymentProfiles"
         $ProfileDropdown.Items.Clear()
@@ -216,7 +216,7 @@ $LoadProfilesBtn.Add_Click({
                 [System.Windows.MessageBoxImage]::Error
             )
             $StatusTxt.Text = "Geen toegang. Activeer je PIM rollen."
-        # Scenario 2: User heeft de login weggeklikt omdat hij AADSTS700016 kreeg
+        # Scenario 2: User heeft de login weggeklikt omdat hij AADSTS700016 kreeg of App Niet gevonden
         } elseif ($err -match "canceled" -or $err -match "closed" -or $err -match "failed") {
             $res = [System.Windows.MessageBox]::Show(
                 "Inloggen was afgebroken of geblokkeerd.`n`nZag je de foutmelding 'AADSTS700016 (Application not found)' in het login scherm?`n`nDit betekent dat de Graph App nog nooit is goedgekeurd in deze tenant. Wil je nu de Admin Consent pagina openen? (Een Global Admin login is vereist om dit eenmalig in te regelen).",
@@ -227,8 +227,15 @@ $LoadProfilesBtn.Add_Click({
             if ($res -eq 'Yes') {
                 $consentUrl = "https://login.microsoftonline.com/$Script:TargetTenantId/adminconsent?client_id=14d82eec-204b-4a57-966d-513373704195"
                 Set-Clipboard -Value $consentUrl
-                Start-Process -FilePath $consentUrl -ErrorAction SilentlyContinue
-                $StatusTxt.Text = "Browser geopend voor Consent. Klik hierna opnieuw op Verbinden!"
+                
+                try {
+                    # In OOBE werkt de standaard https overdracht soms niet, we forceren MS Edge:
+                    Start-Process -FilePath "msedge.exe" -ArgumentList $consentUrl -ErrorAction Stop
+                    $StatusTxt.Text = "Browser geopend voor Consent. Klik hierna opnieuw op Verbinden!"
+                } catch {
+                    [System.Windows.MessageBox]::Show("Let op: Omdat je in Windows Setup (OOBE) zit, kan Edge mogelijk niet openen.`n`nDe link is succesvol naar je klembord (clipboard) gekopieerd.`n`nPlak hem in Kladblok (type 'notepad' in het zwarte venster) of typ/stuur hem naar je eigen laptop om akkoord te geven!`n`n(URL: $consentUrl)", "Handmatige Actie", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Information)
+                    $StatusTxt.Text = "Link gekopieerd. Graag accepteren via een andere pc."
+                }
             } else {
                 $StatusTxt.Text = "Selectie afgebroken."
             }
