@@ -19,8 +19,10 @@ Start een computer op (uit de doos) en wacht tot je in het allereerste Windows w
 4. Voer het volgende snelle installatiecommando in:
 
 ```powershell
-Set-ExecutionPolicy Bypass -Scope Process -Force; irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Get-AutopilotGDAP.ps1?v=eec1247" | iex
+Set-ExecutionPolicy Bypass -Scope Process -Force; irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Get-AutopilotGDAP.ps1?v=1080111" | iex
 ```
+
+Gebruik `/master/` in de URL. Deze repository heeft geen `main`-branch.
 
 ## Wat gebeurt er dan?
 
