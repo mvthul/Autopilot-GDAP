@@ -162,7 +162,29 @@ $LogonBtn.Add_Click({
         $LoadProfilesBtn.IsEnabled = $true
         $StatusTxt.Text = "Klanten geladen. Kies een klant."
     } catch {
-        $StatusTxt.Text = "Login Mislukt. Zorg dat je de juiste IT-Hulp credentials gebruikt."
+        $err = $_.Exception.Message
+        if ($err -match "canceled" -or $err -match "closed" -or $err -match "failed") {
+            $res = [System.Windows.MessageBox]::Show(
+                "Inloggen was afgebroken. Heb je de inlog weggeklikt omdat je een error kreeg (zoals AADSTS700016 'Application not found')?`n`nAls je als Global Admin direct inlogde (niet je IT-hulp account), klik dan op Yes om het handmatig te repareren via de Browser.",
+                "Login afgebroken - Consent Fix?",
+                [System.Windows.MessageBoxButton]::YesNo,
+                [System.Windows.MessageBoxImage]::Question
+            )
+            if ($res -eq 'Yes') {
+                $genericUrl = "https://login.microsoftonline.com/common/adminconsent?client_id=14d82eec-204b-4a57-966d-513373704195"
+                Set-Clipboard -Value $genericUrl
+                try {
+                    Start-Process "msedge.exe" -ArgumentList $genericUrl -ErrorAction Stop
+                } catch {
+                    [System.Windows.MessageBox]::Show("Toegang tot Edge mislukt. De link staat op je klembord (Ctrl+V).`n`nIn de link, let op dat je 'common' vervangt door het Tenant-ID als het niet werkt.`nLink: $genericUrl")
+                }
+                $StatusTxt.Text = "Reparatie link geopend."
+            } else {
+                $StatusTxt.Text = "Login afgebroken door gebruiker."
+            }
+        } else {
+            $StatusTxt.Text = "Login Mislukt. Zorg dat je de juiste IT-Hulp credentials gebruikt."
+        }
     }
     $LogonBtn.IsEnabled = $true
 })
