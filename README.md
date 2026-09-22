@@ -6,28 +6,16 @@ WPF-tool voor IT-hulpmedewerkers om Windows Autopilot-apparaten via GDAP en Micr
 
 De tool gebruikt een eigen multi-tenant App Registration van IT-Hulp. Er worden geen secrets opgeslagen of gepubliceerd.
 
-Maak éénmalig in de partner-tenant een app met:
+Voer de setup éénmalig uit op een beheerpc met Azure CLI en Global Administrator-rechten:
 
-- Naam: `CaptureTech Autopilot GDAP`
-- Accounts: accounts in any organizational directory (multi-tenant)
-- Public client/device-code flow: ingeschakeld
-- Geen client secret
-
-Voeg deze delegated Microsoft Graph-permissies toe:
-
-- `DeviceManagementServiceConfig.ReadWrite.All`
-- `DeviceManagementServiceConfig.Read.All`
-- `Group.Read.All`
-- `GroupMember.ReadWrite.All`
-- `Organization.Read.All`
-
-Geef admin consent in de partner-tenant. Start daarna de tool, plak de **Application (client) ID** in het configuratievak en klik op **Opslaan en controleren**.
-
-De tool bewaart uitsluitend de publieke client-id lokaal in:
-
-```text
-%LOCALAPPDATA%\CaptureTech\AutopilotGDAP\config.json
+```powershell
+irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Setup-AutopilotApp.ps1?v=latest" -OutFile .\Setup-AutopilotApp.ps1
+.\Setup-AutopilotApp.ps1 -PartnerTenantId "<PARTNER-TENANT-ID>"
 ```
+
+Het setupscript maakt een multi-tenant public-client app aan, configureert de delegated Graph-permissies, maakt de Enterprise Application aan en opent de admin-consentpagina. Er wordt geen client secret aangemaakt.
+
+Neem daarna de getoonde **Application (client) ID** over in `Get-AutopilotGDAP.ps1` bij `PublicClientId` en publiceer die versie. De runtime-tool vraagt daarna op andere computers alleen nog om de IT-hulp-login.
 
 Iedere klanttenant moet afzonderlijk admin consent geven. GDAP/PIM blijft vereist; app-consent verleent geen Intune-rol.
 
