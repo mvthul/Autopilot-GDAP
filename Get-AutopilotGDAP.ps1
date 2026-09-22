@@ -543,7 +543,7 @@ $LogonBtn.Add_Click({
     try {
         Connect-MgGraph -ClientId $Global:PublicClientId -Scopes @(
             "Directory.Read.All"
-        ) -NoWelcome -ErrorAction Stop
+        ) -UseDeviceCode -NoWelcome -ErrorAction Stop
         $StatusTxt.Text = "Graph aangemeld. Partner Center-klanten ophalen..."
         $Script:AllContracts = Get-PartnerCenterCustomers
         Update-TenantDropdown
@@ -584,7 +584,7 @@ $LoadProfilesBtn.Add_Click({
             "DeviceManagementServiceConfig.Read.All",
             "Group.Read.All",
             "GroupMember.ReadWrite.All"
-        ) -NoWelcome -ErrorAction Stop
+        ) -UseDeviceCode -NoWelcome -ErrorAction Stop
         
         $Profiles = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeploymentProfiles"
         $ProfileDropdown.Items.Clear()

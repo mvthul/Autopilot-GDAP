@@ -99,6 +99,9 @@ az ad app update --id $appObjectId --is-fallback-public-client true | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Public-client/device-code flow kon niet worden ingeschakeld." }
 az ad app update --id $appObjectId --public-client-redirect-uris http://localhost | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "De localhost redirect URI kon niet worden ingesteld." }
+$brokerRedirect = "ms-appx-web://Microsoft.AAD.BrokerPlugin/$clientId"
+az ad app update --id $appObjectId --public-client-redirect-uris http://localhost $brokerRedirect | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "De Windows Web Account Manager redirect URI kon niet worden ingesteld." }
 
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
