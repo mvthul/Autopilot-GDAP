@@ -190,7 +190,7 @@ function Get-CachedPartnerCenterToken {
 
 function Get-PartnerCenterAccessToken {
     $partnerCenterResource = "https://api.partnercenter.microsoft.com"
-    $tokenUri = "https://login.microsoftonline.com/organizations/oauth2/token"
+    $tokenUri = "https://login.microsoftonline.com/common/oauth2/token"
 
     $cached = Get-CachedPartnerCenterToken
     if ($cached) {
@@ -227,7 +227,7 @@ function Get-PartnerCenterAccessToken {
     }
 
     try {
-        $authorizeUri = "https://login.microsoftonline.com/organizations/oauth2/authorize?client_id=$([uri]::EscapeDataString($Global:PublicClientId))&response_type=code&redirect_uri=$([uri]::EscapeDataString($redirectUri))&response_mode=query&resource=$([uri]::EscapeDataString($partnerCenterResource))&prompt=select_account"
+        $authorizeUri = "https://login.microsoftonline.com/common/oauth2/authorize?client_id=$([uri]::EscapeDataString($Global:PublicClientId))&response_type=code&redirect_uri=$([uri]::EscapeDataString($redirectUri))&response_mode=query&resource=$([uri]::EscapeDataString($partnerCenterResource))&prompt=select_account"
         Start-Process $authorizeUri -ErrorAction Stop
         $asyncResult = $listener.BeginGetContext($null, $null)
         if (-not $asyncResult.AsyncWaitHandle.WaitOne(300000)) {
@@ -249,16 +249,23 @@ function Get-PartnerCenterAccessToken {
         if ($query["error"]) {
             throw "Partner Center-aanmelding mislukt: $($query['error_description'])"
         }
-        $token = Invoke-RestMethod -Method POST -Uri $tokenUri `
-            -Body @{
-                grant_type = "authorization_code"
-                client_id = $Global:PublicClientId
-                code = $query["code"]
-                redirect_uri = $redirectUri
-                resource = $partnerCenterResource
-            } `
-            -ContentType "application/x-www-form-urlencoded" `
-            -ErrorAction Stop
+        try {
+            $token = Invoke-RestMethod -Method POST -Uri $tokenUri `
+                -Body @{
+                    grant_type = "authorization_code"
+                    client_id = $Global:PublicClientId
+                    code = $query["code"]
+                    redirect_uri = $redirectUri
+                    resource = $partnerCenterResource
+                } `
+                -ContentType "application/x-www-form-urlencoded" `
+                -ErrorAction Stop
+        }
+        catch {
+            $detail = $_.ErrorDetails.Message
+            if ([string]::IsNullOrWhiteSpace($detail)) { $detail = $_.Exception.Message }
+            throw "Partner Center-token ophalen mislukt: $detail"
+        }
         Save-PartnerCenterToken $token
         return $token.access_token
     }
