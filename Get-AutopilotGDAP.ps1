@@ -371,18 +371,23 @@ function Get-GraphCollection {
 
 function Get-GroupInfo {
     param([Parameter(Mandatory = $true)][string]$GroupId)
-    $select = "id,displayName,groupTypes,membershipRule,membershipRuleProcessingState,securityEnabled,mailEnabled"
-    $group = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId?%24select=$select" -OutputType PSObject -ErrorAction Stop
+    if ([string]::IsNullOrWhiteSpace($GroupId)) {
+        throw "Autopilot-profiel bevat een groepsassignment zonder groupId. Controleer de assignment-response in het log."
+    }
+    # Fetch the complete group object. Some Windows PowerShell versions and
+    # Invoke-MgGraphRequest combinations incorrectly turn an encoded $select
+    # query into /groups/$select=..., which Graph rejects.
+    $group = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId" -OutputType PSObject -ErrorAction Stop
     $isDynamic = @($group.groupTypes) -contains "DynamicMembership"
     $escapedName = ([string]$group.displayName).Replace("'", "''")
-    $sameNameGroups = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups?%24filter=displayName eq '$escapedName'&%24select=id,displayName")
+    $sameNameGroups = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups" | Where-Object { $_.displayName -eq $group.displayName })
     $children = @()
     $parents = @()
     try {
-        $children = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId/members/microsoft.graph.group?%24select=id,displayName,groupTypes")
+        $children = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId/members/microsoft.graph.group")
     } catch { }
     try {
-        $parents = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId/transitiveMemberOf/microsoft.graph.group?%24select=id,displayName,groupTypes")
+        $parents = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId/transitiveMemberOf/microsoft.graph.group")
     } catch { }
     [pscustomobject]@{
         id = [string]$group.id
