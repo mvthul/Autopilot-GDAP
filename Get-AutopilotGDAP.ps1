@@ -372,17 +372,17 @@ function Get-GraphCollection {
 function Get-GroupInfo {
     param([Parameter(Mandatory = $true)][string]$GroupId)
     $select = "id,displayName,groupTypes,membershipRule,membershipRuleProcessingState,securityEnabled,mailEnabled"
-    $group = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId?`$select=$select" -OutputType PSObject -ErrorAction Stop
+    $group = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId?%24select=$select" -OutputType PSObject -ErrorAction Stop
     $isDynamic = @($group.groupTypes) -contains "DynamicMembership"
     $escapedName = ([string]$group.displayName).Replace("'", "''")
-    $sameNameGroups = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups?`$filter=displayName eq '$escapedName'&`$select=id,displayName")
+    $sameNameGroups = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups?%24filter=displayName eq '$escapedName'&%24select=id,displayName")
     $children = @()
     $parents = @()
     try {
-        $children = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId/members/microsoft.graph.group?`$select=id,displayName,groupTypes")
+        $children = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId/members/microsoft.graph.group?%24select=id,displayName,groupTypes")
     } catch { }
     try {
-        $parents = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId/transitiveMemberOf/microsoft.graph.group?`$select=id,displayName,groupTypes")
+        $parents = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId/transitiveMemberOf/microsoft.graph.group?%24select=id,displayName,groupTypes")
     } catch { }
     [pscustomobject]@{
         id = [string]$group.id
@@ -423,11 +423,11 @@ function Get-LocalSerialNumber {
 function Get-DirectoryDeviceObjectId {
     param([Parameter(Mandatory = $true)][string]$SerialNumber)
     $escapedSerial = $SerialNumber.Replace("'", "''")
-    $uri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=serialNumber eq '$escapedSerial'&`$select=azureActiveDirectoryDeviceId"
+    $uri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?%24filter=serialNumber eq '$escapedSerial'&%24select=azureActiveDirectoryDeviceId"
     $autopilot = @(Get-GraphCollection -Uri $uri | Select-Object -First 1)
     $aadDeviceId = [string]$autopilot.azureActiveDirectoryDeviceId
     if ([string]::IsNullOrWhiteSpace($aadDeviceId)) { return $null }
-    $deviceUri = "https://graph.microsoft.com/v1.0/devices?`$filter=deviceId eq '$aadDeviceId'&`$select=id,displayName"
+    $deviceUri = "https://graph.microsoft.com/v1.0/devices?%24filter=deviceId eq '$aadDeviceId'&%24select=id,displayName"
     return [string](@(Get-GraphCollection -Uri $deviceUri | Select-Object -First 1).id)
 }
 
