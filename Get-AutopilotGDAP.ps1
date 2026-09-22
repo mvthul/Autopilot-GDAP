@@ -2,7 +2,30 @@
 .SYNOPSIS
   Autopilot GDAP GUI - Ontwikkeld voor MSP IT-Hulp met ingebouwde Admin Consent afhandeling
 #>
-$Global:PublicClientId = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
+$Script:AppDisplayName = "CaptureTech Autopilot GDAP"
+$Script:ConfigPath = Join-Path $env:LOCALAPPDATA "CaptureTech\AutopilotGDAP\config.json"
+$Script:ConfiguredClientId = $null
+
+function Get-ConfiguredClientId {
+    if (-not (Test-Path -LiteralPath $Script:ConfigPath)) { return $null }
+    try {
+        $config = Get-Content -LiteralPath $Script:ConfigPath -Raw | ConvertFrom-Json
+        if ($config.clientId -and $config.clientId -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$') {
+            return $config.clientId
+        }
+    } catch { }
+    return $null
+}
+
+function Save-ConfiguredClientId([string]$ClientId) {
+    $directory = Split-Path -Parent $Script:ConfigPath
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    @{ clientId = $ClientId; configuredAtUtc = [DateTime]::UtcNow.ToString("o") } |
+        ConvertTo-Json | Set-Content -LiteralPath $Script:ConfigPath -Encoding UTF8
+    $Script:ConfiguredClientId = $ClientId
+}
+
+$Script:ConfiguredClientId = Get-ConfiguredClientId
 
 # Zorg dat de MS Graph modules geladen zijn
 if (!(Get-Module -ListAvailable Microsoft.Graph.Authentication)) {
@@ -15,7 +38,7 @@ Add-Type -AssemblyName PresentationFramework
 [xml]$XAML = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Autopilot GDAP Registratie" Height="550" Width="450" WindowStartupLocation="CenterScreen"
+        Title="Autopilot GDAP Registratie" Height="700" Width="500" WindowStartupLocation="CenterScreen"
         FontFamily="Segoe UI" Background="#F4F6F9">
     
     <!-- Venster Styling (Ronde hoeken etc) -->
@@ -101,8 +124,19 @@ Add-Type -AssemblyName PresentationFramework
         <!-- Formulier / StackPanel -->
         <StackPanel Grid.Row="1" Margin="25">
             <TextBlock Text="Autopilot Deployment Tool" FontSize="18" FontWeight="Light" Foreground="#00355f" Margin="0,0,0,20" HorizontalAlignment="Center" />
+
+            <Border Name="SetupBorder" Background="#FFF8E1" BorderBrush="#E0A800" BorderThickness="1" CornerRadius="4" Padding="12" Margin="0,0,0,15">
+                <StackPanel>
+                    <TextBlock Text="Eenmalige partner-inrichting" FontWeight="Bold" Foreground="#664D03" />
+                    <TextBlock Name="SetupStatusTxt" TextWrapping="Wrap" Margin="0,5,0,8" Foreground="#664D03" />
+                    <Button Name="OpenAppPortalBtn" Content="Open Entra App Registration" Height="30" Margin="0,0,0,8" />
+                    <TextBlock Text="Client ID van de eigen multi-tenant app:" Foreground="#333333" />
+                    <TextBox Name="ClientIdBox" Height="28" Margin="0,4,0,8" />
+                    <Button Name="SaveClientIdBtn" Content="Opslaan en controleren" Height="30" />
+                </StackPanel>
+            </Border>
             
-            <Button Name="LogonBtn" Content="1. Log in met IT-Hulp Account" Height="35" Margin="0,0,0,15" />
+            <Button Name="LogonBtn" Content="1. Log in met IT-Hulp Account" Height="35" IsEnabled="False" Margin="0,0,0,15" />
             
             <TextBlock Text="Klant Tenant:" FontSize="13" Foreground="#333333" Margin="0,0,0,4"/>
             <ComboBox Name="TenantDropdown" Height="30" IsEnabled="False" Margin="0,0,0,15" DisplayMemberPath="displayName" />
@@ -131,6 +165,11 @@ $Window = [Windows.Markup.XamlReader]::Load($reader)
 
 # Map UI Controls
 $LogonBtn        = $Window.FindName("LogonBtn")
+$SetupBorder     = $Window.FindName("SetupBorder")
+$SetupStatusTxt  = $Window.FindName("SetupStatusTxt")
+$OpenAppPortalBtn = $Window.FindName("OpenAppPortalBtn")
+$ClientIdBox     = $Window.FindName("ClientIdBox")
+$SaveClientIdBtn = $Window.FindName("SaveClientIdBtn")
 $TenantDropdown  = $Window.FindName("TenantDropdown")
 $LoadProfilesBtn = $Window.FindName("LoadProfilesBtn")
 $ProfileDropdown = $Window.FindName("ProfileDropdown")
@@ -142,15 +181,45 @@ $StatusTxt       = $Window.FindName("StatusTxt")
 $Script:TargetTenantId = ""
 $Script:TargetGroupId = ""
 
+$ClientIdBox.Text = [string]$Script:ConfiguredClientId
+if ($Script:ConfiguredClientId) {
+    $SetupStatusTxt.Text = "Eigen app gevonden. Controleer dat admin consent in de partner-tenant is verleend."
+    $LogonBtn.IsEnabled = $true
+} else {
+    $SetupStatusTxt.Text = "Maak eerst de multi-tenant app aan als Global Administrator. Sla daarna de Client ID hier op."
+}
+
+$OpenAppPortalBtn.Add_Click({
+    $portalUrl = "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade"
+    try {
+        Start-Process -FilePath "msedge.exe" -ArgumentList $portalUrl -ErrorAction Stop
+    } catch {
+        Set-Clipboard -Value $portalUrl -ErrorAction SilentlyContinue
+        [System.Windows.MessageBox]::Show("Edge kon niet worden geopend. De Entra-link staat op het klembord:`n`n$portalUrl", "Entra App Registration")
+    }
+})
+
+$SaveClientIdBtn.Add_Click({
+    $clientId = $ClientIdBox.Text.Trim()
+    if ($clientId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$') {
+        $SetupStatusTxt.Text = "Ongeldige Client ID. Gebruik de Application (client) ID van de eigen multi-tenant app."
+        [System.Windows.MessageBox]::Show("Vul een geldige GUID in, bijvoorbeeld: 00000000-0000-0000-0000-000000000000", "Ongeldige Client ID")
+        return
+    }
+    Save-ConfiguredClientId -ClientId $clientId
+    $LogonBtn.IsEnabled = $true
+    $SetupStatusTxt.Text = "Client ID opgeslagen. Meld nu aan met het IT-hulpaccount."
+    $StatusTxt.Text = "Klaar voor aanmelding met de eigen app."
+})
+
 # --- UI Logica ---
 
 $LogonBtn.Add_Click({
     $StatusTxt.Text = "Bezig met inloggen op algemeen partner profiel..."
     $LogonBtn.IsEnabled = $false
     try {
-        Connect-MgGraph -ClientId $Global:PublicClientId -Scopes @(
-            "Organization.Read.All",
-            "Application.Read.All"
+        Connect-MgGraph -ClientId $Script:ConfiguredClientId -Scopes @(
+            "Organization.Read.All"
         ) -NoWelcome -ErrorAction Stop
         $StatusTxt.Text = "Ingelogd! Contracten ophalen..."
         
@@ -167,7 +236,7 @@ $LogonBtn.Add_Click({
     }
     catch {
         $err = $_.Exception.Message
-        if ($err -match "canceled|cancelled|closed|failed|AADSTS700016|Application.*not found") {
+        if ($err -match "canceled|cancelled|closed|failed|AADSTS700016|AADSTS65001|consent|Application.*not found") {
             $res = [System.Windows.MessageBox]::Show(
                 "Inloggen geannuleerd of geblokkeerd.`n`nIs dit het allereerste gebruik binnen jullie IT-Hulp tenant en bestaat de registratie nog niet?`n`nKlik 'Ja' om de consentpagina te openen. Hiervoor is een Global Admin van IT-Hulp nodig.",
                 "Eerste Keer Setup (IT-Hulp Tenant)",
@@ -180,7 +249,7 @@ $LogonBtn.Add_Click({
                 # worden aangemaakt. De tenant-admin moet de bestaande app eenmalig consent geven.
                 # Gebruik het v1 admin-consent endpoint. Dit endpoint vereist geen
                 # scope-parameter en voorkomt AADSTS900144 in oudere tenants.
-                $consentUrl = "https://login.microsoftonline.com/organizations/adminconsent?client_id=$Global:PublicClientId&redirect_uri=http%3A%2F%2Flocalhost"
+                $consentUrl = "https://login.microsoftonline.com/organizations/adminconsent?client_id=$Script:ConfiguredClientId&redirect_uri=http%3A%2F%2Flocalhost"
                 
                 try {
                     Set-Clipboard -Value $consentUrl -ErrorAction SilentlyContinue
@@ -215,9 +284,11 @@ $LoadProfilesBtn.Add_Click({
     $LoadProfilesBtn.IsEnabled = $false
     
     try {
-        Connect-MgGraph -ClientId $Global:PublicClientId -TenantId $Script:TargetTenantId -Scopes @(
+        Connect-MgGraph -ClientId $Script:ConfiguredClientId -TenantId $Script:TargetTenantId -Scopes @(
             "DeviceManagementServiceConfig.ReadWrite.All",
-            "Group.ReadWrite.All"
+            "DeviceManagementServiceConfig.Read.All",
+            "Group.Read.All",
+            "GroupMember.ReadWrite.All"
         ) -NoWelcome -ErrorAction Stop
         
         $Profiles = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeploymentProfiles"
@@ -258,32 +329,18 @@ $LoadProfilesBtn.Add_Click({
                 [System.Windows.MessageBoxImage]::Error
             )
             $StatusTxt.Text = "Geen toegang. Activeer je PIM rollen."
-        # Scenario 2: User heeft de login weggeklikt omdat hij AADSTS700016 kreeg of App Niet gevonden
-        } elseif ($err -match "canceled" -or $err -match "closed" -or $err -match "failed") {
+        # Scenario 2: klantconsent ontbreekt of de login is afgebroken
+        } elseif ($err -match "canceled|cancelled|closed|failed|AADSTS700016|AADSTS65001|consent|Application.*not found") {
             $res = [System.Windows.MessageBox]::Show(
-                "Inloggen was afgebroken of geblokkeerd.`n`nZag je de foutmelding 'AADSTS700016 (Application not found)' in het login scherm?`n`nDit betekent dat de Graph App (nog) niet bestaat in deze tenant. Wil je dit nu automatisch repareren? (Global Admin login vereist)",
-                "Kip en Ei probleem - Consent Fix",
+                "De klanttenant heeft nog geen consent gegeven voor de eigen Autopilot-app, of de login is afgebroken.`n`nWil je de tenant-specifieke admin-consentpagina openen? Hiervoor is een Global Administrator van de klanttenant nodig.",
+                "Admin consent voor klanttenant",
                 [System.Windows.MessageBoxButton]::YesNo,
                 [System.Windows.MessageBoxImage]::Question
             )
             if ($res -eq 'Yes') {
-                $StatusTxt.Text = "App injecteren via AzureAD PowerShell..."
-                try {
-                    # TROJAN HORSE: We loggen in via de ingebouwde klassieke Azure AD app die wél globaal bestaat, wegens een kip-en-ei probleem.
-                    Connect-MgGraph -ClientId "1b730954-1685-4b74-9bfd-dac224a7b894" -TenantId $Script:TargetTenantId -Scopes "Application.ReadWrite.All" -NoWelcome -ErrorAction Stop
-                    
-                    # Maak de Service Principal aan voor Microsoft Graph CLI
-                    $sp = Get-MgServicePrincipal -Filter "appId eq '14d82eec-204b-4c2f-b7e8-296a70dab67e'" -ErrorAction SilentlyContinue
-                    if (-not $sp) {
-                        New-MgServicePrincipal -AppId "14d82eec-204b-4c2f-b7e8-296a70dab67e" | Out-Null
-                    }
-                    Disconnect-MgGraph
-                } catch {
-                    [System.Windows.MessageBox]::Show("Auto-injectie Mislukt. Geen rechten of de login is dichtgeklikt. Fout: $_", "Let op", [System.Windows.MessageBoxButton]::OK, [System.Windows.MessageBoxImage]::Warning)
-                }
-
-                $consentUrl = "https://login.microsoftonline.com/$Script:TargetTenantId/adminconsent?client_id=$Global:PublicClientId&redirect_uri=http%3A%2F%2Flocalhost"
-                Set-Clipboard -Value $consentUrl
+                $StatusTxt.Text = "Consentlink voor klanttenant openen..."
+                $consentUrl = "https://login.microsoftonline.com/$Script:TargetTenantId/adminconsent?client_id=$Script:ConfiguredClientId&redirect_uri=http%3A%2F%2Flocalhost"
+                Set-Clipboard -Value $consentUrl -ErrorAction SilentlyContinue
                 
                 try {
                     Start-Process -FilePath "msedge.exe" -ArgumentList $consentUrl -ErrorAction Stop
