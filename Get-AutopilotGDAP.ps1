@@ -145,6 +145,8 @@ Add-Type -AssemblyName PresentationFramework
             
             <TextBlock Text="Selecteer Profiel (en toegewezen groep):" FontSize="13" Foreground="#333333" Margin="0,0,0,4"/>
             <ComboBox Name="ProfileDropdown" Height="30" IsEnabled="False" Margin="0,0,0,15" DisplayMemberPath="displayName" />
+
+            <CheckBox Name="AddToGroupBox" Content="Voeg apparaat na import toe aan de toegewezen groep" IsEnabled="False" Margin="0,0,0,15" />
             
             <TextBlock Text="Device Hostname (Optioneel):" FontSize="13" Foreground="#333333" Margin="0,0,0,4"/>
             <TextBox Name="HostnameBox" Height="30" IsEnabled="False" Margin="0,0,0,25"/>
@@ -173,6 +175,7 @@ $SaveClientIdBtn = $Window.FindName("SaveClientIdBtn")
 $TenantDropdown  = $Window.FindName("TenantDropdown")
 $LoadProfilesBtn = $Window.FindName("LoadProfilesBtn")
 $ProfileDropdown = $Window.FindName("ProfileDropdown")
+$AddToGroupBox   = $Window.FindName("AddToGroupBox")
 $HostnameBox     = $Window.FindName("HostnameBox")
 $DeployBtn       = $Window.FindName("DeployBtn")
 $StatusTxt       = $Window.FindName("StatusTxt")
@@ -314,6 +317,7 @@ $LoadProfilesBtn.Add_Click({
         }
         
         $ProfileDropdown.IsEnabled = $true
+        $AddToGroupBox.IsEnabled = $true
         $HostnameBox.IsEnabled = $true
         $DeployBtn.IsEnabled = $true
         $StatusTxt.Text = "Profielen geladen voor $TargetName! Klaar voor registratie."
@@ -394,18 +398,38 @@ $DeployBtn.Add_Click({
         
         $autopilotDevice = Invoke-MgGraphRequest -Method POST -Uri $uri -Body $json -ContentType "application/json"
         
-        $StatusTxt.Text = "3/4 Apparaat wachten tot geregistreerd... ($($autopilotDevice.id))"
-        Start-Sleep -Seconds 10 # Wacht even op Intune verwerking
-        
-        if (-not [string]::IsNullOrWhiteSpace($Script:TargetGroupId)) {
-            $StatusTxt.Text = "Toevoegen aan bijbehorende Entra Groep..."
-            # Verkrijg het gekoppelde aadDeviceId (kan duren voordat intune 'm genereert, in dit basic script doen we een ruwe gok of de API 'm klaar heeft)
-            # Voor robuustheid zou hier een poll-loop moeten zitten die kijkt of $autopilotDevice.state.deviceImportStatus -eq 'complete'
+        $StatusTxt.Text = "3/4 Wachten op Intune-import... ($($autopilotDevice.id))"
+        $imported = $null
+        for ($attempt = 1; $attempt -le 20; $attempt++) {
+            Start-Sleep -Seconds 6
+            $imported = Invoke-MgGraphRequest -Method GET -Uri "$uri/$($autopilotDevice.id)"
+            if ($imported.state.deviceImportStatus -eq "complete") { break }
+            if ($imported.state.deviceImportStatus -eq "error") {
+                throw "Intune kon de hardwarehash niet importeren. Controleer de hardwarehash en tenantrechten."
+            }
+            $StatusTxt.Text = "3/4 Wachten op Intune-import... poging $attempt/20"
+        }
+        if ($imported.state.deviceImportStatus -ne "complete") {
+            throw "Timeout: Intune heeft de hardwarehash nog niet afgerond. Controleer de import later in Intune."
+        }
+
+        if ($AddToGroupBox.IsChecked -and [string]::IsNullOrWhiteSpace($Script:TargetGroupId)) {
+            throw "Het geselecteerde profiel heeft geen toegewezen Entra-groep."
+        }
+
+        if ($AddToGroupBox.IsChecked) {
+            $deviceObjectId = $imported.state.deviceRegistrationId
+            if ([string]::IsNullOrWhiteSpace($deviceObjectId)) {
+                throw "Intune heeft nog geen Entra device-object-id teruggegeven. Probeer later opnieuw."
+            }
+            $StatusTxt.Text = "4/5 Apparaat toevoegen aan de geselecteerde groep..."
+            $memberBody = @{ "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$deviceObjectId" } | ConvertTo-Json
+            Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/groups/$Script:TargetGroupId/members/`$ref" -Body $memberBody -ContentType "application/json" -ErrorAction Stop
         }
         
-        $StatusTxt.Text = "4/4 Vraagt Intune Sync aan..."
-        # $syncUri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotSettings/sync"
-        # Invoke-MgGraphRequest -Method POST -Uri $syncUri
+        $StatusTxt.Text = "4/5 Intune-sync aanvragen..."
+        $syncUri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotSettings/sync"
+        Invoke-MgGraphRequest -Method POST -Uri $syncUri -ErrorAction Stop
 
         $StatusTxt.Text = "GEREED! Apparaat ($serial) is geregistreerd. Herstart de computer om OOBE opnieuw te beginnen."
         
