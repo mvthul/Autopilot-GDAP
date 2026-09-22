@@ -33,7 +33,7 @@ irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/G
 ```
 
 4. Meld aan met het IT-hulpaccount.
-5. Gebruik het zoekveld boven de klantlijst om bijvoorbeeld `Hanab` te zoeken. De lijst wordt volledig geladen via Graph-paginering.
+5. Gebruik het zoekveld boven de klantlijst om bijvoorbeeld `Hanab` te zoeken. De lijst wordt volledig geladen via Graph-paginering. Elke keuze toont nu de klantnaam, het primaire tenantdomein en de tenant-ID; dubbele klantnamen zijn daardoor herkenbaar.
 6. Selecteer de klanttenant en verbind met de klantcontext.
 7. Geef klantconsent wanneer de tool daarom vraagt.
 8. Selecteer het Autopilot-profiel en registreer het apparaat.

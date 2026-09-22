@@ -110,7 +110,7 @@ Add-Type -AssemblyName PresentationFramework
             
             <TextBlock Text="Klant Tenant:" FontSize="13" Foreground="#333333" Margin="0,0,0,4"/>
             <TextBox Name="TenantSearchBox" Height="28" IsEnabled="False" Margin="0,0,0,6" ToolTip="Zoek op klantnaam" />
-            <ComboBox Name="TenantDropdown" Height="30" IsEnabled="False" Margin="0,0,0,15" DisplayMemberPath="displayName" />
+            <ComboBox Name="TenantDropdown" Height="30" IsEnabled="False" Margin="0,0,0,15" DisplayMemberPath="displayText" />
             
             <Button Name="LoadProfilesBtn" Content="2. Verbind met Klant &amp; Zoek Profielen" Height="35" IsEnabled="False" Margin="0,0,0,15" />
             
@@ -157,10 +157,12 @@ function Update-TenantDropdown {
     $TenantDropdown.Items.Clear()
     $matches = foreach ($tenant in @($Script:AllContracts)) {
         $name = [string]$tenant.displayName
-        $domain = [string]$tenant.tenantId
+        $domain = [string]$tenant.tenantDomain
+        $id = [string]$tenant.tenantId
         if ([string]::IsNullOrWhiteSpace($filter) -or
             $name.IndexOf($filter, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
-            $domain.IndexOf($filter, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            $domain.IndexOf($filter, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+            $id.IndexOf($filter, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
             $tenant
         }
     }
@@ -190,12 +192,21 @@ $LogonBtn.Add_Click({
         do {
             $page = Invoke-MgGraphRequest -Method GET -Uri $nextUri
             foreach ($c in @($page.value)) {
-                [void]$Script:AllContracts.Add([pscustomobject]@{ displayName = $c.displayName; tenantId = $c.defaultDomainName })
+                $tenantId = [string]$c.customerId
+                $tenantDomain = [string]$c.defaultDomainName
+                if ([string]::IsNullOrWhiteSpace($tenantId)) { $tenantId = $tenantDomain }
+                $displayText = "{0} [{1}] — {2}" -f $c.displayName, $tenantDomain, $tenantId
+                [void]$Script:AllContracts.Add([pscustomobject]@{
+                    displayName = $c.displayName
+                    displayText = $displayText
+                    tenantId = $tenantId
+                    tenantDomain = $tenantDomain
+                })
             }
             $nextUri = $page.'@odata.nextLink'
         } while (-not [string]::IsNullOrWhiteSpace($nextUri))
 
-        $Script:AllContracts = @($Script:AllContracts | Sort-Object displayName, tenantId -Unique)
+        $Script:AllContracts = @($Script:AllContracts | Sort-Object tenantId -Unique)
         Update-TenantDropdown
         
         $TenantSearchBox.IsEnabled = $true
