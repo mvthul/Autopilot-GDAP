@@ -171,35 +171,37 @@ $LogonBtn.Add_Click({
                 [System.Windows.MessageBoxImage]::Question
             )
             if ($res -eq 'Yes') {
-                $StatusTxt.Text = "Kip en Ei doorbreken: Log in het volgende scherm in als Global Admin..."
-                try {
-                    # TROJAN HORSE voor Onbekende Tenant: We gebruiken de AzureAD App ID
-                    Connect-MgGraph -ClientId "1b730954-1685-4b74-9bfd-dac224a7b894" -Scopes "Application.ReadWrite.All" -NoWelcome -ErrorAction Stop
-                    
-                    $context = Get-MgContext
-                    $realTenantId = $context.TenantId
-                    
-                    # Maak de Service Principal aan
-                    $sp = Get-MgServicePrincipal -Filter "appId eq '14d82eec-204b-4a57-966d-513373704195'" -ErrorAction SilentlyContinue
-                    if (-not $sp) {
-                        New-MgServicePrincipal -AppId "14d82eec-204b-4a57-966d-513373704195" | Out-Null
-                    }
-                    Disconnect-MgGraph
-
-                    # Nu openen we de echte Consent URL
-                    $specificUrl = "https://login.microsoftonline.com/$realTenantId/adminconsent?client_id=14d82eec-204b-4a57-966d-513373704195"
-                    Set-Clipboard -Value $specificUrl
-                    
+                Add-Type -AssemblyName Microsoft.VisualBasic
+                $domein = [Microsoft.VisualBasic.Interaction]::InputBox("Wat is de hoofddomeinnaam van de tenant die weigert? (Bijv: ithulp.nu of capturetech.nl)", "Domeinnaam opgeven", "")
+                
+                if ([string]::IsNullOrWhiteSpace($domein)) {
+                    $StatusTxt.Text = "Reparatie afgebroken. Geen domein opgegeven."
+                } else {
+                    $StatusTxt.Text = "Tenant ID ophalen voor $domein..."
                     try {
-                        Start-Process "msedge.exe" -ArgumentList $specificUrl -ErrorAction Stop
-                        $StatusTxt.Text = "Reparatie gelukt! Browser geopend voor definitief consent."
+                        # We reverse-engineeren het onbekende Tenant ID via de publieke OpenID endpoint (Geen login vereist!)
+                        $openIdConfig = Invoke-RestMethod -Uri "https://login.microsoftonline.com/$domein/v2.0/.well-known/openid-configuration" -ErrorAction Stop
+                        # De token endpoint bevat de GUID: https://login.microsoftonline.com/26aaae92-5737-48a2-b00c-27aff5b013e7/oauth2/v2.0/token
+                        if ($openIdConfig.token_endpoint -match "login.microsoftonline.com/([a-fA-F0-9\-]+)/") {
+                            $realTenantId = $matches[1]
+                            
+                            $specificUrl = "https://login.microsoftonline.com/$realTenantId/adminconsent?client_id=14d82eec-204b-4a57-966d-513373704195"
+                            Set-Clipboard -Value $specificUrl
+                            
+                            try {
+                                Start-Process "msedge.exe" -ArgumentList $specificUrl -ErrorAction Stop
+                                $StatusTxt.Text = "Reparatie gelukt! Browser geopend voor 1-malig consent."
+                            } catch {
+                                [System.Windows.MessageBox]::Show("Toegang tot Edge mislukt. De exacte link staat op je klembord (Ctrl+V).`n`nLink: $specificUrl")
+                                $StatusTxt.Text = "Link gekopieerd. Graag accepteren via beheerder."
+                            }
+                        } else {
+                            throw "Kan Tenant ID niet filteren."
+                        }
                     } catch {
-                        [System.Windows.MessageBox]::Show("Toegang tot Edge mislukt. De exacte link staat op je klembord (Ctrl+V).`n`nLink: $specificUrl")
-                        $StatusTxt.Text = "Link gekopieerd. Graag accepteren via beheerder."
+                        [System.Windows.MessageBox]::Show("Domein '$domein' niet gevonden of onjuist. Fout: $_")
+                        $StatusTxt.Text = "Reparatie mislukt."
                     }
-                } catch {
-                    [System.Windows.MessageBox]::Show("Toestemming Mislukt: $_")
-                    $StatusTxt.Text = "Reparatie afgebroken."
                 }
             } else {
                 $StatusTxt.Text = "Login afgebroken door gebruiker."
