@@ -152,15 +152,61 @@ $Script:TargetTenantId = ""
 $Script:TargetGroupId = ""
 $Script:AllContracts = [System.Collections.Generic.List[object]]::new()
 $Script:PartnerCenterAccessToken = $null
+$Script:PartnerCenterTokenPath = Join-Path $(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:TEMP }) "CaptureTech\AutopilotGDAP\partnercenter.token"
+
+function Save-PartnerCenterToken {
+    param([object]$Token)
+    if ([string]::IsNullOrWhiteSpace([string]$Token.refresh_token)) { return }
+    $folder = Split-Path -Parent $Script:PartnerCenterTokenPath
+    New-Item -Path $folder -ItemType Directory -Force -ErrorAction SilentlyContinue | Out-Null
+    $protected = ConvertTo-SecureString ($Token | ConvertTo-Json -Compress) -AsPlainText -Force |
+        ConvertFrom-SecureString
+    Set-Content -Path $Script:PartnerCenterTokenPath -Value $protected -Force
+}
+
+function Get-CachedPartnerCenterToken {
+    if (-not (Test-Path -LiteralPath $Script:PartnerCenterTokenPath)) { return $null }
+    try {
+        $protected = Get-Content -LiteralPath $Script:PartnerCenterTokenPath -Raw
+        $plain = [System.Net.NetworkCredential]::new('', (ConvertTo-SecureString $protected)).Password
+        $cached = $plain | ConvertFrom-Json
+        if ([string]::IsNullOrWhiteSpace([string]$cached.refresh_token)) { return $null }
+        return $cached
+    }
+    catch { return $null }
+}
 
 function Get-PartnerCenterAccessToken {
     $scope = "https://api.partnercenter.microsoft.com/user_impersonation offline_access"
+    $tokenUri = "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+
+    $cached = Get-CachedPartnerCenterToken
+    if ($cached) {
+        try {
+            $renewed = Invoke-RestMethod -Method POST -Uri $tokenUri `
+                -Body @{
+                    grant_type = "refresh_token"
+                    client_id = $Global:PublicClientId
+                    refresh_token = $cached.refresh_token
+                    scope = $scope
+                } `
+                -ContentType "application/x-www-form-urlencoded" `
+                -ErrorAction Stop
+            Save-PartnerCenterToken $renewed
+            return $renewed.access_token
+        }
+        catch {
+            Remove-Item -LiteralPath $Script:PartnerCenterTokenPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     $deviceCode = Invoke-RestMethod -Method POST `
         -Uri "https://login.microsoftonline.com/organizations/oauth2/v2.0/devicecode" `
         -Body @{ client_id = $Global:PublicClientId; scope = $scope } `
         -ContentType "application/x-www-form-urlencoded" `
         -ErrorAction Stop
 
+    Start-Process $deviceCode.verification_uri -ErrorAction SilentlyContinue
     [System.Windows.MessageBox]::Show(
         "Eenmalige Partner Center-aanmelding vereist.`n`nOpen: $($deviceCode.verification_uri)`nCode: $($deviceCode.user_code)`n`nMeld aan met het IT-Hulp-account. Als consent wordt gevraagd, accepteer dit.",
         "Partner Center aanmelden",
@@ -168,7 +214,6 @@ function Get-PartnerCenterAccessToken {
         [System.Windows.MessageBoxImage]::Information
     ) | Out-Null
 
-    $tokenUri = "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
     do {
         Start-Sleep -Seconds ([int]$deviceCode.interval)
         try {
@@ -180,6 +225,7 @@ function Get-PartnerCenterAccessToken {
                 } `
                 -ContentType "application/x-www-form-urlencoded" `
                 -ErrorAction Stop
+            Save-PartnerCenterToken $token
             return $token.access_token
         }
         catch {
