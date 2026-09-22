@@ -96,8 +96,12 @@ if ($LASTEXITCODE -ne 0) { throw "Graph-permissies konden niet aan de app worden
 az ad app update --id $appObjectId --is-fallback-public-client true | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Public-client/device-code flow kon niet worden ingeschakeld." }
 
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
 $spJson = az ad sp show --id $clientId -o json 2>$null
-if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($spJson -join ""))) {
+$spExitCode = $LASTEXITCODE
+$ErrorActionPreference = $previousErrorActionPreference
+if ($spExitCode -ne 0 -or [string]::IsNullOrWhiteSpace(($spJson -join ""))) {
     Write-Host "Enterprise application/service principal aanmaken..." -ForegroundColor Cyan
     az ad sp create --id $clientId | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Enterprise application/service principal kon niet worden aangemaakt." }
