@@ -16,6 +16,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $graphAppId = "00000003-0000-0000-c000-000000000000"
+$partnerCenterAppId = "fa3d9a0c-3fb0-42cc-9193-47c7ecd2edbd"
+$partnerCenterScopeId = "1cebfa2a-fb4d-419e-b5f9-839b4383e05a"
 $scopeNames = @(
     "DeviceManagementServiceConfig.ReadWrite.All",
     "DeviceManagementServiceConfig.Read.All",
@@ -54,6 +56,9 @@ foreach ($scopeName in $scopeNames) {
     }
     $resourceAccess += @{ id = $scopeMap[$scopeName]; type = "Scope" }
 }
+
+az ad app permission add --id $appObjectId --api $partnerCenterAppId --api-permissions "$partnerCenterScopeId=Scope" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Partner Center-permissie kon niet worden toegevoegd." }
 
 $existingJson = az ad app list --all --query "[?displayName=='$DisplayName']" -o json
 if ($LASTEXITCODE -ne 0) {
