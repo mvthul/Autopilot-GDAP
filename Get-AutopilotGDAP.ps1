@@ -593,7 +593,7 @@ $LogonBtn.Add_Click({
     try {
         Connect-MgGraph -ClientId $Global:PublicClientId -Scopes @(
             "Directory.Read.All"
-        ) -NoWelcome -ErrorAction Stop
+        ) -ContextScope Process -NoWelcome -ErrorAction Stop
         $StatusTxt.Text = "Graph aangemeld. Partner Center-klanten ophalen..."
         $Script:AllContracts = Get-PartnerCenterCustomers
         Update-TenantDropdown
@@ -637,7 +637,7 @@ $LoadProfilesBtn.Add_Click({
             "Group.Read.All",
             "GroupMember.ReadWrite.All",
             "Directory.Read.All"
-        ) -NoWelcome -ErrorAction Stop
+        ) -ContextScope Process -NoWelcome -ErrorAction Stop
         $graphContext = Get-MgContext
         Write-ToolLog "Graph-account: $($graphContext.Account)"
         Write-ToolLog "Graph-tenant: $($graphContext.TenantId) (verwacht: $Script:TargetTenantId)"
