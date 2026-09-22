@@ -110,7 +110,7 @@ Add-Type -AssemblyName PresentationFramework
             
             <TextBlock Text="Klant Tenant:" FontSize="13" Foreground="#333333" Margin="0,0,0,4"/>
             <TextBox Name="TenantSearchBox" Height="28" IsEnabled="False" Margin="0,0,0,6" ToolTip="Zoek op klantnaam" />
-            <ComboBox Name="TenantDropdown" Height="30" IsEnabled="False" Margin="0,0,0,15" DisplayMemberPath="displayText" />
+            <ComboBox Name="TenantDropdown" Height="30" IsEnabled="False" Margin="0,0,0,15" DisplayMemberPath="displayName" />
             
             <Button Name="LoadProfilesBtn" Content="2. Verbind met Klant &amp; Zoek Profielen" Height="35" IsEnabled="False" Margin="0,0,0,15" />
             
@@ -156,7 +156,8 @@ function Update-TenantDropdown {
     $filter = [string]$TenantSearchBox.Text.Trim()
     $TenantDropdown.Items.Clear()
     $matches = foreach ($tenant in @($Script:AllContracts)) {
-        $name = [string]$tenant.displayName
+        $name = [string]$tenant.customerName
+        if ([string]::IsNullOrWhiteSpace($name)) { $name = [string]$tenant.displayName }
         $domain = [string]$tenant.tenantDomain
         $id = [string]$tenant.tenantId
         if ([string]::IsNullOrWhiteSpace($filter) -or
@@ -197,8 +198,8 @@ $LogonBtn.Add_Click({
                 if ([string]::IsNullOrWhiteSpace($tenantId)) { $tenantId = $tenantDomain }
                 $displayText = "{0} [{1}] — {2}" -f $c.displayName, $tenantDomain, $tenantId
                 [void]$Script:AllContracts.Add([pscustomobject]@{
-                    displayName = $c.displayName
-                    displayText = $displayText
+                    displayName = $displayText
+                    customerName = [string]$c.displayName
                     tenantId = $tenantId
                     tenantDomain = $tenantDomain
                 })
