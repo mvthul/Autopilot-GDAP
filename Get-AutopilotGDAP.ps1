@@ -3,6 +3,7 @@
   Autopilot GDAP GUI - Ontwikkeld voor MSP IT-Hulp met ingebouwde Admin Consent afhandeling
 #>
 $Global:PublicClientId = "6a87f18c-ab0a-4ef9-bb1c-587ae884b8e0"
+$env:MSAL_FORCE_WAM = "0"
 
 if ($Global:PublicClientId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$') {
     throw "De eigen App Registration is nog niet geconfigureerd. Voer Setup-AutopilotApp.ps1 eenmalig uit en vervang PublicClientId in dit script."
@@ -471,6 +472,7 @@ function Invoke-CommunityOnline {
     if ($scriptText.Contains($originalConnect)) {
         $scriptText = $scriptText.Replace($originalConnect, $reuseBlock.TrimEnd())
     }
+    $scriptText = $scriptText.Replace('setx MSAL_FORCE_WAM 1', '$env:MSAL_FORCE_WAM = "0"')
     Set-Content -LiteralPath $tempPath -Value $scriptText -Encoding UTF8
 
     $staticGroups = @($Profile.groups | Where-Object { -not $_.isDynamic -and -not $_.isExclusion })
