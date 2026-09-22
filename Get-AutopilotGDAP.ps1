@@ -161,38 +161,44 @@ $LogonBtn.Add_Click({
         $TenantDropdown.IsEnabled = $true
         $LoadProfilesBtn.IsEnabled = $true
         $StatusTxt.Text = "Klanten geladen. Kies een klant."
-    } catch {
+    }
+    catch {
         $err = $_.Exception.Message
-        if ($err -match "canceled" -or $err -match "closed" -or $err -match "failed") {
+        if ($err -match "canceled|cancelled|closed|failed|AADSTS700016|Application.*not found") {
             $res = [System.Windows.MessageBox]::Show(
-                "Inloggen geannuleerd of geblokkeerd.`n`nIs dit het allereerste gebruik binnen jullie IT-Hulp tenant en bestaat de registratie nog niet?`n`nKlik 'Ja' om the App Registratie automatisch 1-malig in te richten binnen jullie Partner Tenant.`n(Let op: Log hierna in in Edge als Global Admin van IT-Hulp)",
+                "Inloggen geannuleerd of geblokkeerd.`n`nIs dit het allereerste gebruik binnen jullie IT-Hulp tenant en bestaat de registratie nog niet?`n`nKlik 'Ja' om de consentpagina te openen. Hiervoor is een Global Admin van IT-Hulp nodig.",
                 "Eerste Keer Setup (IT-Hulp Tenant)",
                 [System.Windows.MessageBoxButton]::YesNo,
                 [System.Windows.MessageBoxImage]::Information
             )
             
             if ($res -eq 'Yes') {
-                # De ultieme MAGIC URL: Dit forceert Entra ID om the app aan te maken (in de home tenant van de inlogger) én direct admin consent te vragen.
-                # Dit voorkomt de beruchte AADSTS700016 omdat we `/authorize` gebruiken in plaats van `/adminconsent`.
-                $magicUrl = "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize?client_id=14d82eec-204b-4a57-966d-513373704195&response_type=code&redirect_uri=http://localhost&scope=DeviceManagementServiceConfig.ReadWrite.All%20Group.ReadWrite.All%20Organization.Read.All%20Application.Read.All&prompt=admin_consent"
-                Set-Clipboard -Value $magicUrl
+                # Een publiek client-id kan niet door dit script zelf als app-registratie
+                # worden aangemaakt. De tenant-admin moet de bestaande app eenmalig consent geven.
+                $consentUrl = "https://login.microsoftonline.com/organizations/adminconsent?client_id=$Global:PublicClientId"
                 
                 try {
-                    Start-Process "msedge.exe" -ArgumentList $magicUrl -ErrorAction Stop
-                    [System.Windows.MessageBox]::Show("Edge is geopend!`n`n1. Log in als Global Admin van IT-Hulp.`n2. Klik op 'Accepteren' bij de blauwe prompt.`n3. Zodra je een witte pagina krijgt ('localhost refuse to connect'), kun je Edge sluiten.`n4. De inrichting is dan geslaagd!", "Instructie")
-                    $StatusTxt.Text = "App inrichting gelanceerd in browser."
-                } catch {
-                    [System.Windows.MessageBox]::Show("Edge kon niet geopend worden. De setup-link is gekopieerd naar je klembord (Ctrl+V).`n`nPlak hem in een browser en accepteer de prompt als Global Admin.", "Klembord")
+                    Set-Clipboard -Value $consentUrl -ErrorAction SilentlyContinue
+                    Start-Process -FilePath "msedge.exe" -ArgumentList $consentUrl -ErrorAction Stop
+                    [System.Windows.MessageBox]::Show("Edge is geopend. Log in als Global Admin van IT-Hulp en geef eenmalig consent. Daarna kun je opnieuw inloggen in deze tool.", "Admin consent vereist")
+                    $StatusTxt.Text = "Consentpagina geopend."
+                }
+                catch {
+                    [System.Windows.MessageBox]::Show("Edge kon niet worden geopend. De link staat op het klembord:`n`n$consentUrl", "Admin consent vereist")
                     $StatusTxt.Text = "Setup link gekopieerd."
                 }
-            } else {
+            }
+            else {
                 $StatusTxt.Text = "Login afgebroken door gebruiker."
             }
-        } else {
+        }
+        else {
             $StatusTxt.Text = "Login Mislukt. Zorg dat je de juiste IT-Hulp credentials gebruikt."
         }
     }
-    $LogonBtn.IsEnabled = $true
+    finally {
+        $LogonBtn.IsEnabled = $true
+    }
 })
 
 $LoadProfilesBtn.Add_Click({
