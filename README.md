@@ -39,8 +39,9 @@ irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/G
 6. Gebruik het zoekveld boven de klantlijst om bijvoorbeeld `Hanab` te zoeken. De lijst komt uit Partner Center. Elke keuze toont nu de klantnaam, het primaire tenantdomein en de tenant-ID; dubbele klantnamen zijn daardoor herkenbaar.
 7. Selecteer de klanttenant en verbind met de klantcontext.
 8. Geef klantconsent wanneer de tool daarom vraagt.
-9. Selecteer het Autopilot-profiel en registreer het apparaat.
-10. Vink desgewenst aan dat het apparaat na import aan de toegewezen groep moet worden toegevoegd.
+9. Selecteer het Autopilot-profiel en registreer het apparaat. De tool geeft altijd `-Online`, `-TenantId` en `-Assign` door aan de Community-scriptflow.
+10. Statische profielgroepen worden automatisch via `-AddToGroup` verwerkt; dynamische groepen worden alleen gecontroleerd en nooit handmatig gemuteerd.
+11. Bekijk de live uitvoer in de console en het WPF-logvenster. De rebootknop wordt pas na succesvolle import en assignment actief.
 
 ## Beveiliging
 

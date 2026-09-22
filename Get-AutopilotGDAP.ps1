@@ -19,7 +19,7 @@ Add-Type -AssemblyName PresentationFramework
 [xml]$XAML = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Autopilot GDAP Registratie" Height="550" Width="500" WindowStartupLocation="CenterScreen"
+        Title="Autopilot GDAP Registratie" Width="540" SizeToContent="Height" MinHeight="650" WindowStartupLocation="CenterScreen"
         FontFamily="Segoe UI" Background="#F4F6F9">
     
     <!-- Venster Styling (Ronde hoeken etc) -->
@@ -103,7 +103,8 @@ Add-Type -AssemblyName PresentationFramework
         </Border>
 
         <!-- Formulier / StackPanel -->
-        <StackPanel Grid.Row="1" Margin="25">
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="25">
             <TextBlock Text="Autopilot Deployment Tool" FontSize="18" FontWeight="Light" Foreground="#00355f" Margin="0,0,0,20" HorizontalAlignment="Center" />
 
             <Button Name="LogonBtn" Content="1. Log in met IT-Hulp Account" Height="35" Margin="0,0,0,15" />
@@ -117,24 +118,33 @@ Add-Type -AssemblyName PresentationFramework
             <TextBlock Text="Selecteer Profiel (en toegewezen groep):" FontSize="13" Foreground="#333333" Margin="0,0,0,4"/>
             <ComboBox Name="ProfileDropdown" Height="30" IsEnabled="False" Margin="0,0,0,15" DisplayMemberPath="displayName" />
 
-            <CheckBox Name="AddToGroupBox" Content="Voeg apparaat na import toe aan de toegewezen groep" IsEnabled="False" Margin="0,0,0,15" />
+            <Border Background="#ffffff" BorderBrush="#dddddd" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,15">
+                <TextBlock Name="GroupDecisionTxt" Text="Groepsinformatie verschijnt na het laden van de profielen." Foreground="#555555" TextWrapping="Wrap" />
+            </Border>
             
             <TextBlock Text="Device Hostname (Optioneel):" FontSize="13" Foreground="#333333" Margin="0,0,0,4"/>
             <TextBox Name="HostnameBox" Height="30" IsEnabled="False" Margin="0,0,0,25"/>
 
             <!-- Primaire Actie Knop gestylet in de Cyaan kleur -->
             <Button Name="DeployBtn" Content="3. Registreer Apparaat" Height="45" FontSize="15" IsEnabled="False" Background="#00b0ca" />
+
+            <Button Name="RebootBtn" Content="4. Herstart computer" Height="40" FontSize="14" IsEnabled="False" Margin="0,12,0,0" />
+
+            <TextBlock Text="Uitvoer Community-script:" FontSize="13" Foreground="#333333" Margin="0,18,0,4" />
+            <TextBox Name="LogBox" Height="170" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="11" />
             
             <Border Background="#ffffff" BorderBrush="#dddddd" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,20,0,0">
                 <TextBlock x:Name="StatusTxt" Text="Klaar voor aanmelding..." Foreground="#555555" TextWrapping="Wrap" TextAlignment="Center" />
             </Border>
         </StackPanel>
+        </ScrollViewer>
     </Grid>
 </Window>
 "@
 
 $reader = (New-Object System.Xml.XmlNodeReader $XAML)
 $Window = [Windows.Markup.XamlReader]::Load($reader)
+$Window.MaxHeight = [System.Windows.SystemParameters]::WorkArea.Height
 
 # Map UI Controls
 $LogonBtn        = $Window.FindName("LogonBtn")
@@ -142,14 +152,15 @@ $TenantSearchBox = $Window.FindName("TenantSearchBox")
 $TenantDropdown  = $Window.FindName("TenantDropdown")
 $LoadProfilesBtn = $Window.FindName("LoadProfilesBtn")
 $ProfileDropdown = $Window.FindName("ProfileDropdown")
-$AddToGroupBox   = $Window.FindName("AddToGroupBox")
+$GroupDecisionTxt = $Window.FindName("GroupDecisionTxt")
 $HostnameBox     = $Window.FindName("HostnameBox")
 $DeployBtn       = $Window.FindName("DeployBtn")
+$RebootBtn       = $Window.FindName("RebootBtn")
+$LogBox          = $Window.FindName("LogBox")
 $StatusTxt       = $Window.FindName("StatusTxt")
 
 # Helpers
 $Script:TargetTenantId = ""
-$Script:TargetGroupId = ""
 $Script:AllContracts = [System.Collections.Generic.List[object]]::new()
 $Script:PartnerCenterAccessToken = $null
 $Script:PartnerCenterTokenPath = Join-Path $(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:TEMP }) "CaptureTech\AutopilotGDAP\partnercenter.token"
@@ -291,7 +302,238 @@ function Update-TenantDropdown {
     }
 }
 
+function Write-ToolLog {
+    param([AllowNull()][object]$Message)
+    $text = if ($null -eq $Message) { "" } else { ($Message | Out-String).TrimEnd() }
+    if ([string]::IsNullOrWhiteSpace($text)) { return }
+    Write-Host $text
+    $LogBox.AppendText("$text`r`n")
+    $LogBox.ScrollToEnd()
+    $StatusTxt.Text = $text
+    $Window.Dispatcher.Invoke([action]{}, [System.Windows.Threading.DispatcherPriority]::Background) | Out-Null
+}
+
+function Get-GraphCollection {
+    param([Parameter(Mandatory = $true)][string]$Uri)
+    $items = @()
+    $next = $Uri
+    while ($next) {
+        $page = Invoke-MgGraphRequest -Method GET -Uri $next -OutputType PSObject -ErrorAction Stop
+        $items += @($page.value)
+        $next = $page.'@odata.nextLink'
+    }
+    return $items
+}
+
+function Get-GroupInfo {
+    param([Parameter(Mandatory = $true)][string]$GroupId)
+    $select = "id,displayName,groupTypes,membershipRule,membershipRuleProcessingState,securityEnabled,mailEnabled"
+    $group = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId?`$select=$select" -OutputType PSObject -ErrorAction Stop
+    $isDynamic = @($group.groupTypes) -contains "DynamicMembership"
+    $escapedName = ([string]$group.displayName).Replace("'", "''")
+    $sameNameGroups = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups?`$filter=displayName eq '$escapedName'&`$select=id,displayName")
+    $children = @()
+    $parents = @()
+    try {
+        $children = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId/members/microsoft.graph.group?`$select=id,displayName,groupTypes")
+    } catch { }
+    try {
+        $parents = @(Get-GraphCollection -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId/transitiveMemberOf/microsoft.graph.group?`$select=id,displayName,groupTypes")
+    } catch { }
+    [pscustomobject]@{
+        id = [string]$group.id
+        name = [string]$group.displayName
+        isDynamic = $isDynamic
+        type = if ($isDynamic) { "Dynamisch" } else { "Statisch" }
+        membershipRule = [string]$group.membershipRule
+        membershipRuleProcessingState = [string]$group.membershipRuleProcessingState
+        securityEnabled = [bool]$group.securityEnabled
+        mailEnabled = [bool]$group.mailEnabled
+        matchingGroupCount = @($sameNameGroups).Count
+        childGroups = @($children)
+        parentGroups = @($parents)
+        hasNested = (@($children).Count -gt 0 -or @($parents).Count -gt 0)
+    }
+}
+
+function Get-ProfileAssignments {
+    param([Parameter(Mandatory = $true)][object]$Profile)
+    $assignments = Get-GraphCollection -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeploymentProfiles/$($Profile.id)/assignments"
+    $groups = @()
+    foreach ($assignment in @($assignments)) {
+        $target = $assignment.target
+        $targetType = [string]$target.'@odata.type'
+        $groupId = [string]$target.groupId
+        if ([string]::IsNullOrWhiteSpace($groupId)) { continue }
+        $info = Get-GroupInfo -GroupId $groupId
+        $info | Add-Member -NotePropertyName isExclusion -NotePropertyValue ($targetType -match 'exclusion')
+        $groups += $info
+    }
+    return @($groups)
+}
+
+function Get-LocalSerialNumber {
+    return [string](Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop).SerialNumber
+}
+
+function Get-DirectoryDeviceObjectId {
+    param([Parameter(Mandatory = $true)][string]$SerialNumber)
+    $escapedSerial = $SerialNumber.Replace("'", "''")
+    $uri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeviceIdentities?`$filter=serialNumber eq '$escapedSerial'&`$select=azureActiveDirectoryDeviceId"
+    $autopilot = @(Get-GraphCollection -Uri $uri | Select-Object -First 1)
+    $aadDeviceId = [string]$autopilot.azureActiveDirectoryDeviceId
+    if ([string]::IsNullOrWhiteSpace($aadDeviceId)) { return $null }
+    $deviceUri = "https://graph.microsoft.com/v1.0/devices?`$filter=deviceId eq '$aadDeviceId'&`$select=id,displayName"
+    return [string](@(Get-GraphCollection -Uri $deviceUri | Select-Object -First 1).id)
+}
+
+function Test-DeviceInGroup {
+    param(
+        [Parameter(Mandatory = $true)][string]$GroupId,
+        [Parameter(Mandatory = $true)][string]$DeviceObjectId
+    )
+    try {
+        Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/groups/$GroupId/members/$DeviceObjectId/`$ref" -ErrorAction Stop | Out-Null
+        return $true
+    }
+    catch { return $false }
+}
+
+function Wait-ForDynamicGroupMembership {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$Groups,
+        [Parameter(Mandatory = $true)][string]$SerialNumber
+    )
+    if ($Groups.Count -eq 0) { return }
+    $deviceObjectId = $null
+    for ($deviceAttempt = 1; $deviceAttempt -le 10; $deviceAttempt++) {
+        $deviceObjectId = Get-DirectoryDeviceObjectId -SerialNumber $SerialNumber
+        if (-not [string]::IsNullOrWhiteSpace($deviceObjectId)) { break }
+        Write-ToolLog "Wachten op Entra-device-object voor dynamische groepscontrole ($deviceAttempt/10)..."
+        Start-Sleep -Seconds 30
+    }
+    if ([string]::IsNullOrWhiteSpace($deviceObjectId)) {
+        Write-ToolLog "Dynamische groepscontrole: Entra-device-object voor serienummer $SerialNumber is niet beschikbaar."
+        return
+    }
+    foreach ($group in $Groups) {
+        $isMember = $false
+        for ($attempt = 1; $attempt -le 10; $attempt++) {
+            $isMember = Test-DeviceInGroup -GroupId $group.id -DeviceObjectId $deviceObjectId
+            if ($isMember) { break }
+            Write-ToolLog "Wachten op dynamische membership '$($group.name)' ($attempt/10)..."
+            Start-Sleep -Seconds 30
+        }
+        if ($isMember) {
+            Write-ToolLog "Dynamische groep '$($group.name)': apparaat is lid geworden."
+        } else {
+            Write-ToolLog "Dynamische groep '$($group.name)': apparaat is na controle nog geen lid. Query: $($group.membershipRule)"
+        }
+    }
+}
+
+function Get-CommunityScriptPath {
+    $command = Get-Command Get-WindowsAutopilotInfoCommunity.ps1 -ErrorAction SilentlyContinue
+    if (-not $command) { $command = Get-Command Get-WindowsAutopilotInfoCommunity -ErrorAction SilentlyContinue }
+    if (-not $command) {
+        Write-ToolLog "Community-script ontbreekt; installeren vanuit PSGallery..."
+        Install-Script -Name Get-WindowsAutopilotInfoCommunity -Scope CurrentUser -Force -ErrorAction Stop
+        $command = Get-Command Get-WindowsAutopilotInfoCommunity.ps1 -ErrorAction SilentlyContinue
+        if (-not $command) { $command = Get-Command Get-WindowsAutopilotInfoCommunity -ErrorAction Stop }
+    }
+    return $command.Source
+}
+
+function Invoke-CommunityOnline {
+    param(
+        [Parameter(Mandatory = $true)][string]$TenantId,
+        [Parameter(Mandatory = $true)][object]$Profile
+    )
+    $context = Get-MgContext
+    if (-not $context -or $context.TenantId -ne $TenantId) {
+        throw "De actieve Graph-sessie hoort niet bij klanttenant $TenantId."
+    }
+
+    $source = Get-CommunityScriptPath
+    $tempPath = Join-Path $env:TEMP ("Get-WindowsAutopilotInfoCommunity-{0}.ps1" -f ([guid]::NewGuid()))
+    $scriptText = Get-Content -LiteralPath $source -Raw -ErrorAction Stop
+    $reuseBlock = @'
+                    $existingContext = Get-MgContext
+                    if ($existingContext -and $existingContext.TenantId -eq $Tenant) {
+                        $graph = $existingContext
+                        Write-Host "Using existing Graph session for tenant $Tenant"
+                    }
+                    else {
+                        $graph = Connect-MgGraph -Scopes $scopes
+                    }
+'@
+    $originalConnect = '$graph = Connect-MgGraph -Scopes $scopes'
+    if ($scriptText.Contains($originalConnect)) {
+        $scriptText = $scriptText.Replace($originalConnect, $reuseBlock.TrimEnd())
+    }
+    Set-Content -LiteralPath $tempPath -Value $scriptText -Encoding UTF8
+
+    $staticGroups = @($Profile.groups | Where-Object { -not $_.isDynamic -and -not $_.isExclusion })
+    $dynamicGroups = @($Profile.groups | Where-Object { $_.isDynamic -and -not $_.isExclusion })
+    $duplicateNames = @($staticGroups | Where-Object matchingGroupCount -gt 1 | Select-Object -ExpandProperty name -Unique)
+    if ($duplicateNames.Count -gt 0) {
+        throw "Statische groepsnaam is niet uniek in de tenant: $($duplicateNames -join ', ')."
+    }
+    $nestedStatic = @($staticGroups | Where-Object hasNested)
+    if ($nestedStatic.Count -gt 0) {
+        $nestedText = ($nestedStatic | ForEach-Object {
+            $children = (@($_.childGroups) | ForEach-Object displayName) -join ', '
+            $parents = (@($_.parentGroups) | ForEach-Object displayName) -join ', '
+            "$($_.name) | child-groepen: $children | parent-groepen: $parents"
+        }) -join "`n"
+        $answer = [System.Windows.MessageBox]::Show("Het Autopilot-profiel gebruikt nested statische groepen:`n`n$nestedText`n`nHet apparaat wordt direct aan de toegewezen groep toegevoegd. Doorgaan?", "Nested groep bevestigen", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
+        if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { throw "Registratie afgebroken: nested groepsactie niet bevestigd." }
+    }
+
+    $communityArgs = @('-Online', '-TenantId', $TenantId, '-Assign', '-Verbose')
+    if (-not [string]::IsNullOrWhiteSpace($HostnameBox.Text)) { $communityArgs += @('-AssignedComputerName', $HostnameBox.Text.Trim()) }
+    if ($staticGroups.Count -gt 0) {
+        $communityArgs += '-AddToGroup'
+        $communityArgs += @($staticGroups | ForEach-Object name)
+    }
+    Write-ToolLog "Community-script: $source"
+    Write-ToolLog "Parameters: $($communityArgs -join ' ')"
+    if ($dynamicGroups.Count -gt 0) {
+        foreach ($group in $dynamicGroups) { Write-ToolLog "Dynamische groep: $($group.name); query: $($group.membershipRule)" }
+    }
+    try {
+        & $tempPath @communityArgs *>&1 | ForEach-Object { Write-ToolLog $_ }
+    }
+    finally {
+        Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
+    }
+    return $dynamicGroups
+}
+
+function Update-GroupDecisionText {
+    $profile = $ProfileDropdown.SelectedItem
+    if (-not $profile) {
+        $GroupDecisionTxt.Text = "Groepsinformatie verschijnt na het laden van de profielen."
+        return
+    }
+    $groups = @($profile.groups)
+    if ($groups.Count -eq 0) {
+        $GroupDecisionTxt.Text = "Geen toegewezen groep. Autopilot koppelt het profiel automatisch; -AddToGroup wordt niet gebruikt."
+        return
+    }
+    $lines = foreach ($group in $groups) {
+        $kind = if ($group.isDynamic) { "Dynamisch" } else { "Statisch" }
+        $suffix = if ($group.isExclusion) { " (uitsluiting)" } else { "" }
+        $rule = if ($group.isDynamic) { " Query: $($group.membershipRule)" } else { "" }
+        "- $($group.name): $kind$suffix$rule"
+    }
+    $staticCount = @($groups | Where-Object { -not $_.isDynamic -and -not $_.isExclusion }).Count
+    $action = if ($staticCount -gt 0) { "Statische groepen worden automatisch via -AddToGroup verwerkt." } else { "Geen -AddToGroup; dynamische groepen worden door Entra geëvalueerd." }
+    $GroupDecisionTxt.Text = (($lines -join "`n") + "`n`n" + $action)
+}
+
 $TenantSearchBox.Add_TextChanged({ Update-TenantDropdown })
+$ProfileDropdown.Add_SelectionChanged({ Update-GroupDecisionText })
 
 # --- UI Logica ---
 
@@ -348,28 +590,17 @@ $LoadProfilesBtn.Add_Click({
         $ProfileDropdown.Items.Clear()
         
         foreach ($p in $Profiles.value) {
-            $assignUri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeploymentProfiles/$($p.id)/assignments"
-            $assignments = Invoke-MgGraphRequest -Method GET -Uri $assignUri
-            
-            $assignedGroupName = "Onbekend"
-            $assignedGroupId = ""
-            if ($assignments.value -and $assignments.value[0].target.groupId) {
-                 $assignedGroupId = $assignments.value[0].target.groupId
-                 $groupUri = "https://graph.microsoft.com/v1.0/groups/$assignedGroupId"
-                 try {
-                     $groupData = Invoke-MgGraphRequest -Method GET -Uri $groupUri
-                     $assignedGroupName = $groupData.displayName
-                 } catch { $assignedGroupName = "Kan naam niet lezen" }
-            }
-            
-            $displayTxt = "{0} (Groep: {1})" -f $p.displayName, $assignedGroupName
-            [void]$ProfileDropdown.Items.Add([pscustomobject]@{ displayName = $displayTxt; profileId = $p.id; groupId = $assignedGroupId })
+            $groups = @(Get-ProfileAssignments -Profile $p)
+            $groupSummary = if ($groups.Count -eq 0) { "Geen groep" } else { (($groups | ForEach-Object { "$($_.name) [$($_.type)]" }) -join "; ") }
+            $displayTxt = "{0} (Groep: {1})" -f $p.displayName, $groupSummary
+            [void]$ProfileDropdown.Items.Add([pscustomobject]@{ displayName = $displayTxt; profileId = $p.id; groups = $groups })
         }
         
         $ProfileDropdown.IsEnabled = $true
-        $AddToGroupBox.IsEnabled = $true
         $HostnameBox.IsEnabled = $true
         $DeployBtn.IsEnabled = $true
+        if ($ProfileDropdown.Items.Count -gt 0) { $ProfileDropdown.SelectedIndex = 0 }
+        Update-GroupDecisionText
         $StatusTxt.Text = "Profielen geladen voor $TargetName! Klaar voor registratie."
     } catch {
         $err = $_.Exception.Message
@@ -416,77 +647,40 @@ $LoadProfilesBtn.Add_Click({
 $DeployBtn.Add_Click({
     if (-not $ProfileDropdown.SelectedItem) { $StatusTxt.Text = "Selecteer een profiel!"; return }
     $DeployBtn.IsEnabled = $false
-    $Script:TargetGroupId = $ProfileDropdown.SelectedItem.groupId
+    $RebootBtn.IsEnabled = $false
+    $LogBox.Clear()
+    $profile = $ProfileDropdown.SelectedItem
     
     try {
-        $StatusTxt.Text = "1/4 Hardware Hash genereren (kan even duren)..."
-        
-        # WMI logica om hash te extraheren
-        $session = New-CimSession
-        $devDetail = Get-CimInstance -CimSession $session -Namespace root/cimv2/mdm/dmmap -ClassName MDM_DevDetail_Ext01 -Filter "InstanceID='Ext' AND ParentID='./DevDetail'"
-        $hash = $devDetail.DeviceHardwareData
-        $serial = (Get-CimInstance -CimSession $session -ClassName Win32_BIOS).SerialNumber
-        Remove-CimSession $session
-        
-        if ([string]::IsNullOrWhiteSpace($hash)) {
-            throw "Kon hardware hash niet uitlezen!"
+        Write-ToolLog "Klanttenant: $Script:TargetTenantId"
+        Write-ToolLog "Profiel: $($profile.displayName)"
+        $serial = Get-LocalSerialNumber
+        Write-ToolLog "Serienummer: $serial"
+        $dynamicGroups = Invoke-CommunityOnline -TenantId $Script:TargetTenantId -Profile $profile
+        foreach ($group in @($dynamicGroups)) {
+            Write-ToolLog "Geen -AddToGroup voor dynamische groep '$($group.name)'. Entra beoordeelt: $($group.membershipRule)"
         }
-        
-        $StatusTxt.Text = "2/4 Registreren bij Intune Graph API..."
-        
-        $uri = "https://graph.microsoft.com/beta/deviceManagement/importedWindowsAutopilotDeviceIdentities"
-        $json = @{
-            "@odata.type" = "#microsoft.graph.importedWindowsAutopilotDeviceIdentity"
-            "groupTag" = ""
-            "serialNumber" = $serial
-            "hardwareIdentifier" = $hash
-            "state" = @{
-                "@odata.type" = "microsoft.graph.importedWindowsAutopilotDeviceIdentityState"
-                "deviceImportStatus" = "pending"
-            }
-        } | ConvertTo-Json -Depth 5
-        
-        $autopilotDevice = Invoke-MgGraphRequest -Method POST -Uri $uri -Body $json -ContentType "application/json"
-        
-        $StatusTxt.Text = "3/4 Wachten op Intune-import... ($($autopilotDevice.id))"
-        $imported = $null
-        for ($attempt = 1; $attempt -le 20; $attempt++) {
-            Start-Sleep -Seconds 6
-            $imported = Invoke-MgGraphRequest -Method GET -Uri "$uri/$($autopilotDevice.id)"
-            if ($imported.state.deviceImportStatus -eq "complete") { break }
-            if ($imported.state.deviceImportStatus -eq "error") {
-                throw "Intune kon de hardwarehash niet importeren. Controleer de hardwarehash en tenantrechten."
-            }
-            $StatusTxt.Text = "3/4 Wachten op Intune-import... poging $attempt/20"
-        }
-        if ($imported.state.deviceImportStatus -ne "complete") {
-            throw "Timeout: Intune heeft de hardwarehash nog niet afgerond. Controleer de import later in Intune."
-        }
-
-        if ($AddToGroupBox.IsChecked -and [string]::IsNullOrWhiteSpace($Script:TargetGroupId)) {
-            throw "Het geselecteerde profiel heeft geen toegewezen Entra-groep."
-        }
-
-        if ($AddToGroupBox.IsChecked) {
-            $deviceObjectId = $imported.state.deviceRegistrationId
-            if ([string]::IsNullOrWhiteSpace($deviceObjectId)) {
-                throw "Intune heeft nog geen Entra device-object-id teruggegeven. Probeer later opnieuw."
-            }
-            $StatusTxt.Text = "4/5 Apparaat toevoegen aan de geselecteerde groep..."
-            $memberBody = @{ "@odata.id" = "https://graph.microsoft.com/v1.0/directoryObjects/$deviceObjectId" } | ConvertTo-Json
-            Invoke-MgGraphRequest -Method POST -Uri "https://graph.microsoft.com/v1.0/groups/$Script:TargetGroupId/members/`$ref" -Body $memberBody -ContentType "application/json" -ErrorAction Stop
-        }
-        
-        $StatusTxt.Text = "4/5 Intune-sync aanvragen..."
-        $syncUri = "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotSettings/sync"
-        Invoke-MgGraphRequest -Method POST -Uri $syncUri -ErrorAction Stop
-
-        $StatusTxt.Text = "GEREED! Apparaat ($serial) is geregistreerd. Herstart de computer om OOBE opnieuw te beginnen."
-        
+        Wait-ForDynamicGroupMembership -Groups @($dynamicGroups) -SerialNumber $serial
+        $RebootBtn.IsEnabled = $true
+        $StatusTxt.Text = "GEREED! Autopilot-import en -Assign zijn succesvol afgerond."
+        Write-ToolLog "GEREED. Herstart kan nu via knop 4."
     } catch {
-       $StatusTxt.Text = "Registratie Mislukt: $_" 
+       $RebootBtn.IsEnabled = $false
+       Write-ToolLog "Registratie mislukt: $_"
     }
     $DeployBtn.IsEnabled = $true
+})
+
+$RebootBtn.Add_Click({
+    $answer = [System.Windows.MessageBox]::Show(
+        "Autopilot is geregistreerd. Wil je deze computer nu herstarten?",
+        "Computer herstarten",
+        [System.Windows.MessageBoxButton]::YesNo,
+        [System.Windows.MessageBoxImage]::Question
+    )
+    if ($answer -eq [System.Windows.MessageBoxResult]::Yes) {
+        Restart-Computer -Force
+    }
 })
 
 # Laat window zien
