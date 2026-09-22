@@ -17,6 +17,8 @@ Het setupscript maakt een multi-tenant public-client app aan, configureert de de
 
 De tool gebruikt Partner Center `/v1/customers` voor de klantenlijst. Daardoor worden ook klanten zichtbaar die niet in Graph `/contracts` staan, zoals Hanab. Graph wordt daarna gebruikt voor Intune en Autopilot. De eerste keer zijn twee resource-aanmeldingen nodig: Graph en Partner Center.
 
+De Partner Center-refresh-token wordt uitsluitend lokaal per Windows-gebruiker met DPAPI versleuteld opgeslagen. Daardoor verschijnt de Partner Center-device-code op dezelfde pc niet bij iedere volgende start opnieuw. Op een nieuwe pc blijft een eerste aanmelding per gebruiker vereist.
+
 De huidige partner-app-client-id is al ingevuld in `Get-AutopilotGDAP.ps1`. Als je een nieuwe app aanmaakt, vervang je daar de waarde bij `PublicClientId` en publiceer je die versie. De runtime-tool vraagt op andere computers alleen nog om de IT-hulp-login.
 
 Iedere klanttenant moet afzonderlijk admin consent geven. GDAP/PIM blijft vereist; app-consent verleent geen Intune-rol.
