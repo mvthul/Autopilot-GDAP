@@ -109,6 +109,7 @@ Add-Type -AssemblyName PresentationFramework
             <Button Name="LogonBtn" Content="1. Log in met IT-Hulp Account" Height="35" Margin="0,0,0,15" />
             
             <TextBlock Text="Klant Tenant:" FontSize="13" Foreground="#333333" Margin="0,0,0,4"/>
+            <TextBox Name="TenantSearchBox" Height="28" IsEnabled="False" Margin="0,0,0,6" ToolTip="Zoek op klantnaam" />
             <ComboBox Name="TenantDropdown" Height="30" IsEnabled="False" Margin="0,0,0,15" DisplayMemberPath="displayName" />
             
             <Button Name="LoadProfilesBtn" Content="2. Verbind met Klant &amp; Zoek Profielen" Height="35" IsEnabled="False" Margin="0,0,0,15" />
@@ -137,6 +138,7 @@ $Window = [Windows.Markup.XamlReader]::Load($reader)
 
 # Map UI Controls
 $LogonBtn        = $Window.FindName("LogonBtn")
+$TenantSearchBox = $Window.FindName("TenantSearchBox")
 $TenantDropdown  = $Window.FindName("TenantDropdown")
 $LoadProfilesBtn = $Window.FindName("LoadProfilesBtn")
 $ProfileDropdown = $Window.FindName("ProfileDropdown")
@@ -148,6 +150,21 @@ $StatusTxt       = $Window.FindName("StatusTxt")
 # Helpers
 $Script:TargetTenantId = ""
 $Script:TargetGroupId = ""
+$Script:AllContracts = [System.Collections.Generic.List[object]]::new()
+
+function Update-TenantDropdown {
+    $filter = $TenantSearchBox.Text.Trim()
+    $TenantDropdown.Items.Clear()
+    $matches = $Script:AllContracts
+    if (-not [string]::IsNullOrWhiteSpace($filter)) {
+        $matches = $matches | Where-Object { $_.displayName -like "*$filter*" }
+    }
+    foreach ($tenant in $matches) {
+        [void]$TenantDropdown.Items.Add($tenant)
+    }
+}
+
+$TenantSearchBox.Add_TextChanged({ Update-TenantDropdown })
 
 # --- UI Logica ---
 
@@ -158,15 +175,22 @@ $LogonBtn.Add_Click({
         Connect-MgGraph -ClientId $Global:PublicClientId -Scopes @(
             "Directory.Read.All"
         ) -NoWelcome -ErrorAction Stop
-        $StatusTxt.Text = "Ingelogd! Contracten ophalen..."
+        $StatusTxt.Text = "Ingelogd! Alle klantpagina's ophalen..."
+
+        $Script:AllContracts = [System.Collections.Generic.List[object]]::new()
+        $nextUri = "https://graph.microsoft.com/v1.0/contracts"
+        do {
+            $page = Invoke-MgGraphRequest -Method GET -Uri $nextUri
+            foreach ($c in @($page.value)) {
+                [void]$Script:AllContracts.Add([pscustomobject]@{ displayName = $c.displayName; tenantId = $c.defaultDomainName })
+            }
+            $nextUri = $page.'@odata.nextLink'
+        } while (-not [string]::IsNullOrWhiteSpace($nextUri))
+
+        $Script:AllContracts = @($Script:AllContracts | Sort-Object displayName, tenantId -Unique)
+        Update-TenantDropdown
         
-        $Contracts = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/contracts"
-        
-        $TenantDropdown.Items.Clear()
-        foreach ($c in $Contracts.value) {
-            [void]$TenantDropdown.Items.Add([pscustomobject]@{ displayName = $c.displayName; tenantId = $c.defaultDomainName })
-        }
-        
+        $TenantSearchBox.IsEnabled = $true
         $TenantDropdown.IsEnabled = $true
         $LoadProfilesBtn.IsEnabled = $true
         $StatusTxt.Text = "Klanten geladen. Kies een klant."

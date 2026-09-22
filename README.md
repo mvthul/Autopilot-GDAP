@@ -9,7 +9,7 @@ De tool gebruikt een eigen multi-tenant App Registration van IT-Hulp. Er worden 
 Voer de setup éénmalig uit op een beheerpc met Azure CLI en Global Administrator-rechten:
 
 ```powershell
-irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/e82ac66/Setup-AutopilotApp.ps1" -OutFile .\Setup-AutopilotApp.ps1
+irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Setup-AutopilotApp.ps1" -OutFile .\Setup-AutopilotApp.ps1
 .\Setup-AutopilotApp.ps1 -PartnerTenantId "<PARTNER-TENANT-ID>"
 ```
 
@@ -29,14 +29,15 @@ Iedere klanttenant moet afzonderlijk admin consent geven. GDAP/PIM blijft vereis
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
-irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/e82ac66/Get-AutopilotGDAP.ps1" | iex
+irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Get-AutopilotGDAP.ps1" | iex
 ```
 
 4. Meld aan met het IT-hulpaccount.
-5. Selecteer de klanttenant en verbind met de klantcontext.
-6. Geef klantconsent wanneer de tool daarom vraagt.
-7. Selecteer het Autopilot-profiel en registreer het apparaat.
-8. Vink desgewenst aan dat het apparaat na import aan de toegewezen groep moet worden toegevoegd.
+5. Gebruik het zoekveld boven de klantlijst om bijvoorbeeld `Hanab` te zoeken. De lijst wordt volledig geladen via Graph-paginering.
+6. Selecteer de klanttenant en verbind met de klantcontext.
+7. Geef klantconsent wanneer de tool daarom vraagt.
+8. Selecteer het Autopilot-profiel en registreer het apparaat.
+9. Vink desgewenst aan dat het apparaat na import aan de toegewezen groep moet worden toegevoegd.
 
 ## Beveiliging
 
