@@ -39,7 +39,7 @@ Iedere klanttenant moet afzonderlijk admin consent geven. GDAP/PIM blijft vereis
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
-irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Get-AutopilotGDAP.ps1?v=2c3c327" | iex
+irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Get-AutopilotGDAP.ps1?v=9d54906" | iex
 ```
 
 4. Configureer bij eerste gebruik de eigen client-id.
@@ -47,6 +47,7 @@ irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/G
 6. Selecteer de klanttenant en verbind met de klantcontext.
 7. Geef klantconsent wanneer de tool daarom vraagt.
 8. Selecteer het Autopilot-profiel en registreer het apparaat.
+9. Vink desgewenst aan dat het apparaat na import aan de toegewezen groep moet worden toegevoegd.
 
 ## Beveiliging
 
