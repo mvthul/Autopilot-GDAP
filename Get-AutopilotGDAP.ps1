@@ -163,8 +163,6 @@ $LogonBtn.Add_Click({
         $StatusTxt.Text = "Klanten geladen. Kies een klant."
     } catch {
         $err = $_.Exception.Message
-    catch {
-        $err = $_.Exception.Message
         if ($err -match "canceled" -or $err -match "closed" -or $err -match "failed") {
             $res = [System.Windows.MessageBox]::Show(
                 "Inloggen geannuleerd of geblokkeerd.`n`nIs dit het allereerste gebruik binnen jullie IT-Hulp tenant en bestaat de registratie nog niet?`n`nKlik 'Ja' om the App Registratie automatisch 1-malig in te richten binnen jullie Partner Tenant.`n(Let op: Log hierna in in Edge als Global Admin van IT-Hulp)",
