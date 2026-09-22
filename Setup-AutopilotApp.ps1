@@ -54,30 +54,53 @@ foreach ($scopeName in $scopeNames) {
     $resourceAccess += @{ id = $scopeMap[$scopeName]; type = "Scope" }
 }
 
-$requiredAccess = @(@{
+$requiredAccessObject = @(@{
     resourceAppId  = $graphAppId
     resourceAccess = $resourceAccess
-}) | ConvertTo-Json -Depth 5 -Compress
+})
+$manifestPath = Join-Path $env:TEMP ("autopilot-required-access-" + [guid]::NewGuid().ToString("N") + ".json")
+$requiredAccessObject | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
+$manifestArgument = "@$manifestPath"
 
-$existing = @(az ad app list --display-name $DisplayName --all --query "[?displayName=='$DisplayName']" -o json | ConvertFrom-Json)
-if ($existing.Count -gt 0) {
-    $app = $existing[0]
-    $clientId = $app.appId
+$existingJson = az ad app list --all --query "[?displayName=='$DisplayName']" -o json
+if ($LASTEXITCODE -ne 0) {
+    throw "Bestaande appregistraties konden niet worden opgehaald."
+}
+$existing = $existingJson | ConvertFrom-Json
+if ($existing) {
+    $app = @($existing)[0]
+    if ([string]::IsNullOrWhiteSpace([string]$app.appId) -or [string]::IsNullOrWhiteSpace([string]$app.id)) {
+        throw "De gevonden app '$DisplayName' heeft geen geldige object-id/client-id. Controleer de appregistratie handmatig."
+    }
+    $clientId = [string]$app.appId
+    $appObjectId = [string]$app.id
     Write-Host "Bestaande app gevonden: $clientId" -ForegroundColor Yellow
-    az ad app update --id $app.id --sign-in-audience AzureADMultipleOrgs --required-resource-accesses $requiredAccess | Out-Null
+    az ad app update --id $appObjectId --sign-in-audience AzureADMultipleOrgs | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Bestaande app kon niet als multi-tenant worden ingesteld." }
 } else {
     Write-Host "Multi-tenant app aanmaken..." -ForegroundColor Cyan
-    $app = az ad app create --display-name $DisplayName --sign-in-audience AzureADMultipleOrgs --required-resource-accesses $requiredAccess | ConvertFrom-Json
-    $clientId = $app.appId
+    $appJson = az ad app create --display-name $DisplayName --sign-in-audience AzureADMultipleOrgs -o json
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($appJson -join ""))) {
+        throw "Appregistratie kon niet worden aangemaakt."
+    }
+    $app = $appJson | ConvertFrom-Json
+    $clientId = [string]$app.appId
+    $appObjectId = [string]$app.id
+    if ([string]::IsNullOrWhiteSpace($clientId) -or [string]::IsNullOrWhiteSpace($appObjectId)) {
+        throw "Azure CLI gaf geen geldige client-id/object-id terug."
+    }
 }
 
-az ad app update --id $clientId --is-fallback-public-client true | Out-Null
+az ad app update --id $appObjectId --required-resource-accesses $manifestArgument | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Graph-permissies konden niet aan de app worden toegevoegd." }
+az ad app update --id $appObjectId --is-fallback-public-client true | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Public-client/device-code flow kon niet worden ingeschakeld." }
 
-try {
-    az ad sp show --id $clientId | Out-Null
-} catch {
+$spJson = az ad sp show --id $clientId -o json 2>$null
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($spJson -join ""))) {
     Write-Host "Enterprise application/service principal aanmaken..." -ForegroundColor Cyan
     az ad sp create --id $clientId | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Enterprise application/service principal kon niet worden aangemaakt." }
 }
 
 $consentUrl = "https://login.microsoftonline.com/$PartnerTenantId/adminconsent?client_id=$clientId&redirect_uri=http%3A%2F%2Flocalhost"
