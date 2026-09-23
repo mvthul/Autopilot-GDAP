@@ -122,6 +122,9 @@ Add-Type -AssemblyName PresentationFramework
             <Border Background="#ffffff" BorderBrush="#dddddd" BorderThickness="1" CornerRadius="4" Padding="10" Margin="0,0,0,15">
                 <TextBlock Name="GroupDecisionTxt" Text="Groepsinformatie verschijnt na het laden van de profielen." Foreground="#555555" TextWrapping="Wrap" />
             </Border>
+
+            <TextBlock Name="GroupChoiceLabel" Text="Statische groep voor handmatige toevoeging:" FontSize="13" Foreground="#333333" Margin="0,0,0,4" Visibility="Collapsed" />
+            <ComboBox Name="GroupChoiceDropdown" Height="30" IsEnabled="False" Margin="0,0,0,15" DisplayMemberPath="displayName" Visibility="Collapsed" />
             
             <TextBlock Text="Device Hostname (Optioneel):" FontSize="13" Foreground="#333333" Margin="0,0,0,4"/>
             <TextBox Name="HostnameBox" Height="30" IsEnabled="False" Margin="0,0,0,25"/>
@@ -154,6 +157,8 @@ $TenantDropdown  = $Window.FindName("TenantDropdown")
 $LoadProfilesBtn = $Window.FindName("LoadProfilesBtn")
 $ProfileDropdown = $Window.FindName("ProfileDropdown")
 $GroupDecisionTxt = $Window.FindName("GroupDecisionTxt")
+$GroupChoiceLabel = $Window.FindName("GroupChoiceLabel")
+$GroupChoiceDropdown = $Window.FindName("GroupChoiceDropdown")
 $HostnameBox     = $Window.FindName("HostnameBox")
 $DeployBtn       = $Window.FindName("DeployBtn")
 $RebootBtn       = $Window.FindName("RebootBtn")
@@ -493,6 +498,37 @@ function Get-ProfileAssignments {
     return @($groups)
 }
 
+function Get-ProfileGroupCandidates {
+    param([Parameter(Mandatory = $true)][object[]]$Groups)
+    $candidates = [System.Collections.Generic.List[object]]::new()
+
+    foreach ($group in @($Groups | Where-Object { -not $_.isDynamic -and -not $_.isExclusion })) {
+        [void]$candidates.Add([pscustomobject]@{
+            id = $group.id
+            name = $group.name
+            source = "Direct toegewezen statische groep"
+            displayName = "$($group.name) - direct statisch"
+            groupInfo = $group
+        })
+    }
+
+    foreach ($dynamicGroup in @($Groups | Where-Object { $_.isDynamic -and -not $_.isExclusion })) {
+        foreach ($child in @($dynamicGroup.childGroups)) {
+            if (@($child.groupTypes) -contains "DynamicMembership") { continue }
+            if ([string]::IsNullOrWhiteSpace([string]$child.id)) { continue }
+            [void]$candidates.Add([pscustomobject]@{
+                id = [string]$child.id
+                name = [string]$child.displayName
+                source = "Nested onder dynamische groep '$($dynamicGroup.name)'"
+                displayName = "$($child.displayName) - nested statisch onder $($dynamicGroup.name)"
+                groupInfo = $null
+            })
+        }
+    }
+
+    return @($candidates | Group-Object id | ForEach-Object { $_.Group[0] } | Sort-Object displayName)
+}
+
 function Get-LocalSerialNumber {
     return [string](Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop).SerialNumber
 }
@@ -568,7 +604,8 @@ function Get-CommunityScriptPath {
 function Invoke-CommunityOnline {
     param(
         [Parameter(Mandatory = $true)][string]$TenantId,
-        [Parameter(Mandatory = $true)][object]$Profile
+        [Parameter(Mandatory = $true)][object]$Profile,
+        [AllowNull()][object]$SelectedAddToGroup
     )
     $context = Get-MgContext
     if (-not $context -or $context.TenantId -ne $TenantId) {
@@ -595,36 +632,38 @@ function Invoke-CommunityOnline {
     $scriptText = $scriptText.Replace('setx MSAL_FORCE_WAM 1', '$env:MSAL_FORCE_WAM = "0"')
     Set-Content -LiteralPath $tempPath -Value $scriptText -Encoding UTF8
 
-    $staticGroups = @($Profile.groups | Where-Object { -not $_.isDynamic -and -not $_.isExclusion })
     $dynamicGroups = @($Profile.groups | Where-Object { $_.isDynamic -and -not $_.isExclusion })
-    $duplicateNames = @($staticGroups | Where-Object matchingGroupCount -gt 1 | Select-Object -ExpandProperty name -Unique)
-    if ($duplicateNames.Count -gt 0) {
-        throw "Statische groepsnaam is niet uniek in de tenant: $($duplicateNames -join ', ')."
+    $candidates = @($Profile.groupCandidates)
+    if ($candidates.Count -gt 1 -and -not $SelectedAddToGroup) {
+        throw "Kies eerst een statische groep voor -AddToGroup."
     }
-    $nestedStatic = @($staticGroups | Where-Object hasNested)
-    if ($nestedStatic.Count -gt 0) {
-        $nestedText = ($nestedStatic | ForEach-Object {
-            $children = (@($_.childGroups) | ForEach-Object displayName) -join ', '
-            $parents = (@($_.parentGroups) | ForEach-Object displayName) -join ', '
-            "$($_.name) | child-groepen: $children | parent-groepen: $parents"
-        }) -join "`n"
-        $answer = [System.Windows.MessageBox]::Show("Het Autopilot-profiel gebruikt nested statische groepen:`n`n$nestedText`n`nHet apparaat wordt direct aan de toegewezen groep toegevoegd. Doorgaan?", "Nested groep bevestigen", [System.Windows.MessageBoxButton]::YesNo, [System.Windows.MessageBoxImage]::Question)
-        if ($answer -ne [System.Windows.MessageBoxResult]::Yes) { throw "Registratie afgebroken: nested groepsactie niet bevestigd." }
+    if ($candidates.Count -eq 1) { $SelectedAddToGroup = $candidates[0] }
+    if ($SelectedAddToGroup -and -not ($SelectedAddToGroup.name -in @($candidates | ForEach-Object name))) {
+        throw "De gekozen groep is geen geldige kandidaat voor dit profiel."
     }
 
-    $communityArgs = @('-Online', '-TenantId', $TenantId, '-Assign', '-Verbose')
-    if (-not [string]::IsNullOrWhiteSpace($HostnameBox.Text)) { $communityArgs += @('-AssignedComputerName', $HostnameBox.Text.Trim()) }
-    if ($staticGroups.Count -gt 0) {
-        $communityArgs += '-AddToGroup'
-        $communityArgs += @($staticGroups | ForEach-Object name)
+    $commandInfo = Get-Command -Name $tempPath -ErrorAction Stop
+    $requiredParameters = @("Online", "TenantId", "Assign")
+    $missingParameters = @($requiredParameters | Where-Object { -not $commandInfo.Parameters.ContainsKey($_) })
+    if ($missingParameters.Count -gt 0) {
+        throw "Community-script '$source' ondersteunt vereiste parameter(s) niet: $($missingParameters -join ', '). Gevonden: $($commandInfo.Parameters.Keys -join ', ')."
     }
+
+    $communityParameters = @{
+        Online = $true
+        TenantId = $TenantId
+        Assign = $true
+        Verbose = $true
+    }
+    if (-not [string]::IsNullOrWhiteSpace($HostnameBox.Text)) { $communityParameters['AssignedComputerName'] = $HostnameBox.Text.Trim() }
+    if ($SelectedAddToGroup) { $communityParameters['AddToGroup'] = [string]$SelectedAddToGroup.name }
     Write-ToolLog "Community-script: $source"
-    Write-ToolLog "Parameters: $($communityArgs -join ' ')"
+    Write-ToolLog "Parameters worden uitsluitend nu, na klik op Registreer Apparaat, doorgegeven: $($communityParameters.Keys -join ', ')"
     if ($dynamicGroups.Count -gt 0) {
         foreach ($group in $dynamicGroups) { Write-ToolLog "Dynamische groep: $($group.name); query: $($group.membershipRule)" }
     }
     try {
-        & $tempPath @communityArgs *>&1 | ForEach-Object { Write-ToolLog $_ }
+        & $tempPath @communityParameters *>&1 | ForEach-Object { Write-ToolLog $_ }
     }
     finally {
         Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
@@ -634,6 +673,10 @@ function Invoke-CommunityOnline {
 
 function Update-GroupDecisionText {
     $profile = $ProfileDropdown.SelectedItem
+    $GroupChoiceDropdown.Items.Clear()
+    $GroupChoiceDropdown.IsEnabled = $false
+    $GroupChoiceDropdown.Visibility = [System.Windows.Visibility]::Collapsed
+    $GroupChoiceLabel.Visibility = [System.Windows.Visibility]::Collapsed
     if (-not $profile) {
         $GroupDecisionTxt.Text = "Groepsinformatie verschijnt na het laden van de profielen."
         return
@@ -649,8 +692,21 @@ function Update-GroupDecisionText {
         $rule = if ($group.isDynamic) { " Query: $($group.membershipRule)" } else { "" }
         "- $($group.name): $kind$suffix$rule"
     }
-    $staticCount = @($groups | Where-Object { -not $_.isDynamic -and -not $_.isExclusion }).Count
-    $action = if ($staticCount -gt 0) { "Statische groepen worden automatisch via -AddToGroup verwerkt." } else { "Geen -AddToGroup; dynamische groepen worden door Entra geevalueerd." }
+    $candidates = @($profile.groupCandidates)
+    if ($candidates.Count -eq 0) {
+        $action = "Geen geschikte statische groep. Geen -AddToGroup; dynamische groepen worden door Entra geevalueerd."
+    }
+    elseif ($candidates.Count -eq 1) {
+        $action = "Een statische kandidaat: '$($candidates[0].name)'. Deze wordt bij Registreren via -AddToGroup gebruikt."
+    }
+    else {
+        foreach ($candidate in $candidates) { [void]$GroupChoiceDropdown.Items.Add($candidate) }
+        $GroupChoiceLabel.Visibility = [System.Windows.Visibility]::Visible
+        $GroupChoiceDropdown.Visibility = [System.Windows.Visibility]::Visible
+        $GroupChoiceDropdown.IsEnabled = $true
+        $GroupChoiceDropdown.SelectedIndex = 0
+        $action = "$($candidates.Count) statische kandidaten gevonden. Kies hieronder precies een groep voor -AddToGroup."
+    }
     $GroupDecisionTxt.Text = (($lines -join "`n") + "`n`n" + $action)
 }
 
@@ -723,9 +779,10 @@ $LoadProfilesBtn.Add_Click({
         
         foreach ($p in $Profiles.value) {
             $groups = @(Get-ProfileAssignments -Profile $p)
+            $groupCandidates = @(Get-ProfileGroupCandidates -Groups $groups)
             $groupSummary = if ($groups.Count -eq 0) { "Geen groep" } else { (($groups | ForEach-Object { "$($_.name) [$($_.type)]" }) -join "; ") }
             $displayTxt = "{0} (Groep: {1})" -f $p.displayName, $groupSummary
-            [void]$ProfileDropdown.Items.Add([pscustomobject]@{ displayName = $displayTxt; profileId = $p.id; groups = $groups })
+            [void]$ProfileDropdown.Items.Add([pscustomobject]@{ displayName = $displayTxt; profileId = $p.id; groups = $groups; groupCandidates = $groupCandidates })
         }
         
         $ProfileDropdown.IsEnabled = $true
@@ -790,7 +847,7 @@ $DeployBtn.Add_Click({
         Write-ToolLog "Profiel: $($profile.displayName)"
         $serial = Get-LocalSerialNumber
         Write-ToolLog "Serienummer: $serial"
-        $dynamicGroups = Invoke-CommunityOnline -TenantId $Script:TargetTenantId -Profile $profile
+        $dynamicGroups = Invoke-CommunityOnline -TenantId $Script:TargetTenantId -Profile $profile -SelectedAddToGroup $GroupChoiceDropdown.SelectedItem
         foreach ($group in @($dynamicGroups)) {
             Write-ToolLog "Geen -AddToGroup voor dynamische groep '$($group.name)'. Entra beoordeelt: $($group.membershipRule)"
         }
