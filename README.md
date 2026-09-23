@@ -23,6 +23,49 @@ De huidige partner-app-client-id is al ingevuld in `Get-AutopilotGDAP.ps1`. Als 
 
 Iedere klanttenant moet afzonderlijk admin consent geven. GDAP/PIM blijft vereist; app-consent verleent geen Intune-rol.
 
+## Benodigde rechten
+
+De tool werkt met **delegated permissions**: de app geeft dus nooit zelfstandig toegang. De aangemelde IT-Hulp-gebruiker moet op het moment van uitvoeren via een actieve GDAP/PIM-toewijzing rechten hebben in de geselecteerde klanttenant.
+
+### Eenmalig: partner-tenant en app-inrichting
+
+| Onderdeel | Minimale rol / vereiste | Waarvoor |
+| --- | --- | --- |
+| Uitvoeren van `Setup-AutopilotApp.ps1` | Global Administrator in de IT-Hulp partner-tenant | Multi-tenant app registreren, delegated permissions configureren en partner-consent geven. |
+| Partner Center-klantenlijst | Partner Center-rol die klanten mag bekijken, normaal **Admin agent** | De klantlijst ophalen via Partner Center. |
+| Eerste Partner Center-consent | Een account dat Partner Center-consent mag verlenen | Eenmalige browserconsent voor `user_impersonation`; daarna gebruikt iedere technicus zijn eigen lokale, versleutelde token. |
+
+De app vraagt uitsluitend deze delegated Microsoft Graph-scopes aan:
+
+- `DeviceManagementServiceConfig.Read.All`
+- `DeviceManagementServiceConfig.ReadWrite.All`
+- `Directory.Read.All`
+- `Group.Read.All`
+- `GroupMember.ReadWrite.All`
+
+### Eenmalig per klanttenant: app autoriseren
+
+De Enterprise Application **CaptureTech Autopilot GDAP** moet in iedere klanttenant bestaan en admin consent hebben voor de bovenstaande Graph-scopes. Hiervoor is een **Global Administrator van de klanttenant** nodig. Dit is noodzakelijk vóór een GDAP-beheerder de app in die klant kan gebruiken; zonder deze stap verschijnt `AADSTS90099`.
+
+> App-consent vervangt GDAP niet. Het autoriseert de applicatie; de handelingen blijven namens de aangemelde partnergebruiker en diens GDAP-rollen plaatsvinden.
+
+### Tijdens gebruik: IT-Hulp-account / GDAP-PIM in de klanttenant
+
+| Functie in deze tool | Minimale actieve GDAP-rol in de klanttenant |
+| --- | --- |
+| Autopilot-profielen lezen, apparaat importeren en `-Assign` uitvoeren | **Intune Administrator** |
+| Toegewezen groepen, dynamische query’s en nested groepen lezen | **Groups Administrator** |
+| Apparaat via `-AddToGroup` aan een statische groep toevoegen | **Groups Administrator** |
+
+Praktisch betekent dit:
+
+1. De GDAP-relatie met de klant moet actief zijn én minimaal **Intune Administrator** en **Groups Administrator** bevatten.
+2. Het IT-Hulp-account moet lid zijn van de security group waarop deze GDAP-relatie is gebaseerd.
+3. Wanneer die group PIM-managed is, moet de technicus de juiste PIM-activatie vóór stap 2 van de tool uitvoeren.
+4. Voor een profiel zonder statische groepsactie is alleen **Intune Administrator** nodig; voor een dynamische groep wordt nooit handmatig membership gewijzigd.
+
+Groepen die niet door Groups Administrator beheerd kunnen worden (bijvoorbeeld role-assignable groups, of groepen waarvoor klantbeleid aanvullende beperkingen oplegt) worden niet automatisch aangepast. Gebruik hiervoor een expliciet geautoriseerde beheerdersroute.
+
 ## Gebruik tijdens Windows Setup
 
 1. Druk in OOBE op `Shift + F10`.
