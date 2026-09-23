@@ -276,6 +276,7 @@ export function App() {
 
   const visibleLogs = logs.filter((entry) => showTechnicalLog || !entry.technical);
   const canRegister = Boolean(selectedProfile) && (!selectedProfile || selectedProfile.groupCandidates.length < 2 || Boolean(selectedGroupId));
+  const hasSessionDetails = Boolean(selectedCustomer || selectedProfile || registration || busy || visibleLogs.length > 0);
 
   return (
     <main className="app-shell">
@@ -499,7 +500,7 @@ export function App() {
             )}
           </section>
 
-          <aside className="status-column">
+          <aside className={`status-column ${hasSessionDetails ? "" : "status-idle"}`}>
             <section className="content-card device-card">
               <p className="eyebrow">Sessie</p>
               <h3>Registratieoverzicht</h3>
@@ -511,7 +512,7 @@ export function App() {
               </dl>
             </section>
 
-            <section className="content-card log-card">
+            <section className={`content-card log-card ${visibleLogs.length === 0 && !busy ? "empty-log-card" : ""}`}>
               <div className="log-header">
                 <div><p className="eyebrow">Live status</p><h3>Uitvoer</h3></div>
                 {busy && <LoaderCircle className="spin accent" size={18} />}

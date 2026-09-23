@@ -123,7 +123,7 @@ Deze portable EXE vraagt bij normaal Windows-gebruik automatisch administratorre
 
 ```powershell
 $exe = Join-Path $env:TEMP "CaptureTech-Autopilot-GDAP.exe"
-irm "https://github.com/mvthul/Autopilot-GDAP/releases/download/tauri-v0.1.0/capturetech-autopilot-gdap.exe" -OutFile $exe
+irm "https://github.com/mvthul/Autopilot-GDAP/releases/latest/download/capturetech-autopilot-gdap.exe" -OutFile $exe
 Start-Process -FilePath $exe
 ```
 
