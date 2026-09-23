@@ -160,4 +160,4 @@ irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/G
 
 ## Documentatie
 
-De [GitHub Wiki](https://github.com/mvthul/Autopilot-GDAP/wiki) bevat aparte pagina's voor installatie en releases, OOBE, GDAP/PIM-rechten en troubleshooting.
+De GitHub Wiki-functie is ingeschakeld. De bronpagina's voor installatie en releases, OOBE, GDAP/PIM-rechten en troubleshooting staan in [`docs/wiki`](docs/wiki). GitHub maakt de afzonderlijke wiki-repository pas aan nadat er eenmaal via de [Wiki-pagina](https://github.com/mvthul/Autopilot-GDAP/wiki) een eerste pagina is gemaakt; daarna kunnen deze pagina's direct worden gepubliceerd.
