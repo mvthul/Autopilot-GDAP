@@ -1,6 +1,9 @@
 # Autopilot GDAP Tool
 
-WPF-tool voor IT-hulpmedewerkers om Windows Autopilot-apparaten via GDAP en Microsoft Graph aan klanttenants toe te voegen.
+[![CodeQL security scan](https://github.com/mvthul/Autopilot-GDAP/actions/workflows/codeql.yml/badge.svg)](https://github.com/mvthul/Autopilot-GDAP/actions/workflows/codeql.yml)
+[![Tauri Windows release](https://github.com/mvthul/Autopilot-GDAP/actions/workflows/build-tauri.yml/badge.svg)](https://github.com/mvthul/Autopilot-GDAP/actions/workflows/build-tauri.yml)
+
+CaptureTech-toolset voor IT-hulpmedewerkers om Windows Autopilot-apparaten via GDAP en Microsoft Graph aan klanttenants toe te voegen. De moderne Tauri-app is de primaire interface; de WPF-tool blijft beschikbaar als herstel- en diagnosepad.
 
 ## Nieuwe CaptureTech desktop-app
 
@@ -33,7 +36,17 @@ Een GitHub Actions-workflow bouwt de Windows x64-EXE op een Windows-runner. Publ
 tauri-v0.1.0
 ```
 
-De workflow voegt `capturetech-autopilot-gdap.exe` toe aan de bijbehorende GitHub Release. De huidige `Get-AutopilotGDAP.ps1` blijft beschikbaar als fallback voor OOBE, herstel en diagnose.
+De workflow voegt `capturetech-autopilot-gdap.exe` én `capturetech-autopilot-gdap.exe.sha256` toe aan de bijbehorende GitHub Release. Controleer de SHA-256 vóór bredere distributie. De huidige `Get-AutopilotGDAP.ps1` blijft beschikbaar als fallback voor OOBE, herstel en diagnose.
+
+### Tauri-interface
+
+De onderstaande screenshots tonen de desktopinterface met veilige voorbeeldgegevens. De gebouwde Windows-app gebruikt dezelfde interface met de echte browser-, Graph- en Partner Center-koppeling.
+
+![Aanmelden in de CaptureTech Tauri-app](docs/screenshots/tauri-aanmelden.png)
+
+![Profiel- en groepskeuze in de CaptureTech Tauri-app](docs/screenshots/tauri-profielkeuze.png)
+
+![Succesvolle registratie in de CaptureTech Tauri-app](docs/screenshots/tauri-gereed.png)
 
 ## Eerste inrichting
 
@@ -99,25 +112,42 @@ Praktisch betekent dit:
 
 Groepen die niet door Groups Administrator beheerd kunnen worden (bijvoorbeeld role-assignable groups, of groepen waarvoor klantbeleid aanvullende beperkingen oplegt) worden niet automatisch aangepast. Gebruik hiervoor een expliciet geautoriseerde beheerdersroute.
 
-## Gebruik tijdens Windows Setup
+## Gebruik tijdens Windows Setup (OOBE)
 
 1. Druk in OOBE op `Shift + F10`.
 2. Start PowerShell.
-3. Voer uit:
+
+### Optie A — CaptureTech Tauri-app (aanbevolen)
+
+Deze portable EXE vraagt bij normaal Windows-gebruik automatisch administratorrechten. In OOBE is de PowerShell-sessie doorgaans al verhoogd. Windows 10/11 x64, PowerShell 5.1+ en WebView2 Evergreen zijn vereist.
+
+```powershell
+$exe = Join-Path $env:TEMP "CaptureTech-Autopilot-GDAP.exe"
+irm "https://github.com/mvthul/Autopilot-GDAP/releases/download/tauri-v0.1.0/capturetech-autopilot-gdap.exe" -OutFile $exe
+Start-Process -FilePath $exe
+```
+
+De app opent de normale browseraanmelding voor Graph en Partner Center; er wordt geen WAM of device code gebruikt. Selecteer vervolgens de klant, het profiel en — uitsluitend wanneer nodig — een veilige statische groep.
+
+### Optie B — PowerShell/WPF fallback
+
+Gebruik de fallback wanneer WebView2 ontbreekt, de Tauri-app niet kan starten of voor gerichte diagnose:
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
 irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/Get-AutopilotGDAP.ps1" | iex
 ```
 
-4. Meld aan met het IT-hulpaccount.
-5. Bevestig bij eerste gebruik ook de Partner Center-browseraanmelding. De setup registreert hiervoor `http://localhost:8765/` als loopback redirect.
-6. Gebruik het zoekveld boven de klantlijst om bijvoorbeeld `Hanab` te zoeken. De lijst komt uit Partner Center. Elke keuze toont nu de klantnaam, het primaire tenantdomein en de tenant-ID; dubbele klantnamen zijn daardoor herkenbaar.
-7. Selecteer de klanttenant en verbind met de klantcontext.
-8. Geef klantconsent wanneer de tool daarom vraagt.
-9. Selecteer het Autopilot-profiel en registreer het apparaat. De tool geeft altijd `-Online`, `-TenantId` en `-Assign` door aan de Community-scriptflow.
-10. Statische profielgroepen worden automatisch via `-AddToGroup` verwerkt; dynamische groepen worden alleen gecontroleerd en nooit handmatig gemuteerd.
-11. Bekijk de live uitvoer in de console en het WPF-logvenster. De rebootknop wordt pas na succesvolle import en assignment actief.
+### Vervolgstappen voor beide opties
+
+1. Meld aan met het IT-Hulp-account.
+2. Bevestig bij eerste gebruik ook de Partner Center-browseraanmelding. De setup registreert hiervoor `http://localhost:8765/` als loopback redirect.
+3. Gebruik het zoekveld boven de klantlijst om bijvoorbeeld `Hanab` te zoeken. De lijst komt uit Partner Center. Elke keuze toont de klantnaam, het primaire tenantdomein en de tenant-ID; dubbele klantnamen zijn daardoor herkenbaar.
+4. Selecteer de klanttenant en verbind met de klantcontext.
+5. Geef klantconsent wanneer de tool daarom vraagt.
+6. Selecteer het Autopilot-profiel en registreer het apparaat. De tool geeft altijd `-Online`, `-TenantId` en `-Assign` door aan de Community-scriptflow.
+7. Statische profielgroepen worden via `-AddToGroup` verwerkt; dynamische groepen worden alleen gecontroleerd en nooit handmatig gemuteerd.
+8. De herstartknop wordt pas actief na succesvolle import, assignment en een eventuele statische groepsactie.
 
 ## Beveiliging
 
@@ -125,3 +155,9 @@ irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/G
 - Alleen delegated permissions; geen app-only toegang.
 - Geen automatische appregistratie of verborgen bootstrap-account.
 - PIM/GDAP-rollen worden niet door de tool gewijzigd.
+- Zie de volledige [Security Policy](SECURITY.md) voor verantwoord melden, ondersteunde versies en veiligheidsgrenzen.
+- CodeQL scant TypeScript en Rust; GitHub Secret Scanning, push protection en Dependabot zijn ingeschakeld.
+
+## Documentatie
+
+De [GitHub Wiki](https://github.com/mvthul/Autopilot-GDAP/wiki) bevat aparte pagina's voor installatie en releases, OOBE, GDAP/PIM-rechten en troubleshooting.
