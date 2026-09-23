@@ -6,7 +6,6 @@ import {
   ChevronDown,
   CircleHelp,
   Computer,
-  ExternalLink,
   FileText,
   LoaderCircle,
   LockKeyhole,
