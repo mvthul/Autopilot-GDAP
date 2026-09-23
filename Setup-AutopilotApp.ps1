@@ -32,7 +32,7 @@ if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
 }
 
 Write-Host "Aanmelden op partner-tenant $PartnerTenantId..." -ForegroundColor Cyan
-az login --tenant $PartnerTenantId | Out-Null
+az login --tenant $PartnerTenantId --scope "https://graph.microsoft.com//.default" | Out-Null
 $loggedInTenant = az account show --query tenantId -o tsv
 if ($loggedInTenant -ne $PartnerTenantId) {
     throw "Azure CLI is aangemeld op tenant '$loggedInTenant' in plaats van '$PartnerTenantId'."
