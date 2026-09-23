@@ -499,7 +499,7 @@ function Get-ProfileAssignments {
 }
 
 function Get-ProfileGroupCandidates {
-    param([Parameter(Mandatory = $true)][object[]]$Groups)
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Groups)
     $candidates = [System.Collections.Generic.List[object]]::new()
 
     foreach ($group in @($Groups | Where-Object { -not $_.isDynamic -and -not $_.isExclusion })) {
@@ -779,7 +779,7 @@ $LoadProfilesBtn.Add_Click({
         
         foreach ($p in $Profiles.value) {
             $groups = @(Get-ProfileAssignments -Profile $p)
-            $groupCandidates = @(Get-ProfileGroupCandidates -Groups $groups)
+            $groupCandidates = if ($groups.Count -gt 0) { @(Get-ProfileGroupCandidates -Groups $groups) } else { @() }
             $groupSummary = if ($groups.Count -eq 0) { "Geen groep" } else { (($groups | ForEach-Object { "$($_.name) [$($_.type)]" }) -join "; ") }
             $displayTxt = "{0} (Groep: {1})" -f $p.displayName, $groupSummary
             [void]$ProfileDropdown.Items.Add([pscustomobject]@{ displayName = $displayTxt; profileId = $p.id; groups = $groups; groupCandidates = $groupCandidates })
