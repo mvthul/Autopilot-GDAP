@@ -57,9 +57,6 @@ foreach ($scopeName in $scopeNames) {
     $resourceAccess += @{ id = $scopeMap[$scopeName]; type = "Scope" }
 }
 
-az ad app permission add --id $appObjectId --api $partnerCenterAppId --api-permissions "$partnerCenterScopeId=Scope" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Partner Center-permissie kon niet worden toegevoegd." }
-
 $existingJson = az ad app list --all --query "[?displayName=='$DisplayName']" -o json
 if ($LASTEXITCODE -ne 0) {
     throw "Bestaande appregistraties konden niet worden opgehaald."
@@ -88,6 +85,10 @@ if ($existing) {
         throw "Azure CLI gaf geen geldige client-id/object-id terug."
     }
 }
+
+Write-Host "Partner Center-permissie instellen..." -ForegroundColor Cyan
+az ad app permission add --id $appObjectId --api $partnerCenterAppId --api-permissions "$partnerCenterScopeId=Scope" | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Partner Center-permissie kon niet worden toegevoegd." }
 
 Write-Host "Graph-permissies instellen..." -ForegroundColor Cyan
 $previousErrorActionPreference = $ErrorActionPreference
