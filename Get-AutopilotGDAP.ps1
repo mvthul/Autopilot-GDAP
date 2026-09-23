@@ -135,6 +135,7 @@ Add-Type -AssemblyName PresentationFramework
             <Button Name="RebootBtn" Content="4. Herstart computer" Height="40" FontSize="14" IsEnabled="False" Margin="0,12,0,0" />
 
             <TextBlock Text="Uitvoer Community-script:" FontSize="13" Foreground="#333333" Margin="0,18,0,4" />
+            <CheckBox Name="VerboseCheck" Content="Toon technische uitvoer (Graph GET/POST en modulemeldingen)" Margin="0,0,0,6" IsChecked="False" />
             <TextBox Name="LogBox" Height="170" IsReadOnly="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="11" />
             
             <Border Background="#ffffff" BorderBrush="#dddddd" BorderThickness="1" CornerRadius="4" Padding="15" Margin="0,20,0,0">
@@ -162,6 +163,7 @@ $GroupChoiceDropdown = $Window.FindName("GroupChoiceDropdown")
 $HostnameBox     = $Window.FindName("HostnameBox")
 $DeployBtn       = $Window.FindName("DeployBtn")
 $RebootBtn       = $Window.FindName("RebootBtn")
+$VerboseCheck    = $Window.FindName("VerboseCheck")
 $LogBox          = $Window.FindName("LogBox")
 $StatusTxt       = $Window.FindName("StatusTxt")
 
@@ -434,6 +436,33 @@ function Write-ToolLog {
     $Window.Dispatcher.Invoke([action]{}, [System.Windows.Threading.DispatcherPriority]::Background) | Out-Null
 }
 
+function Write-CommunityOutput {
+    param([AllowNull()][object]$Record)
+
+    $text = if ($null -eq $Record) { "" } else { ($Record | Out-String).TrimEnd() }
+    if ([string]::IsNullOrWhiteSpace($text)) { return }
+
+    # The Community script emits Graph request details and module-import chatter
+    # only useful for diagnostics. Keep normal progress/results visible by default.
+    if (-not $VerboseCheck.IsChecked) {
+        $technicalPatterns = @(
+            '^Loading module from path ',
+            '^Importing (cmdlet|function|alias) ',
+            '^Version \d+ module detected',
+            '^(GET|POST|PUT|PATCH|DELETE) https://graph\.microsoft\.com/',
+            '^received \d+-byte response',
+            '^Perform operation ',
+            "^Operation '.*' (complete|with following parameters)",
+            '^\s*ClientId\s+:',
+            '^\{\s*$'
+        )
+        foreach ($pattern in $technicalPatterns) {
+            if ($text -match $pattern) { return }
+        }
+    }
+    Write-ToolLog $text
+}
+
 function Get-GraphCollection {
     param([Parameter(Mandatory = $true)][string]$Uri)
     $items = @()
@@ -659,17 +688,18 @@ function Invoke-CommunityOnline {
         Online = $true
         TenantId = $TenantId
         Assign = $true
-        Verbose = $true
     }
+    if ($VerboseCheck.IsChecked) { $communityParameters['Verbose'] = $true }
     if (-not [string]::IsNullOrWhiteSpace($HostnameBox.Text)) { $communityParameters['AssignedComputerName'] = $HostnameBox.Text.Trim() }
     if ($SelectedAddToGroup) { $communityParameters['AddToGroup'] = [string]$SelectedAddToGroup.name }
     Write-ToolLog "Community-script: $source"
     Write-ToolLog "Parameters worden uitsluitend nu, na klik op Registreer Apparaat, doorgegeven: $($communityParameters.Keys -join ', ')"
+    if ($SelectedAddToGroup) { Write-ToolLog "Statische groepsactie: -AddToGroup '$($SelectedAddToGroup.name)'." }
     if ($dynamicGroups.Count -gt 0) {
-        foreach ($group in $dynamicGroups) { Write-ToolLog "Dynamische groep: $($group.name); query: $($group.membershipRule)" }
+        foreach ($group in $dynamicGroups) { Write-ToolLog "Dynamische groep '$($group.name)': geen handmatige toevoeging (correct). Entra beoordeelt: $($group.membershipRule)" }
     }
     try {
-        & $tempPath @communityParameters *>&1 | ForEach-Object { Write-ToolLog $_ }
+        & $tempPath @communityParameters *>&1 | ForEach-Object { Write-CommunityOutput $_ }
     }
     finally {
         Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
@@ -855,9 +885,11 @@ $DeployBtn.Add_Click({
         Write-ToolLog "Serienummer: $serial"
         $dynamicGroups = Invoke-CommunityOnline -TenantId $Script:TargetTenantId -Profile $profile -SelectedAddToGroup $GroupChoiceDropdown.SelectedItem
         foreach ($group in @($dynamicGroups)) {
-            Write-ToolLog "Geen -AddToGroup voor dynamische groep '$($group.name)'. Entra beoordeelt: $($group.membershipRule)"
+            Write-ToolLog "Dynamische groep '$($group.name)' wordt automatisch verwerkt door Entra; de regel kan enige tijd nodig hebben."
         }
-        Wait-ForDynamicGroupMembership -Groups @($dynamicGroups) -SerialNumber $serial
+        # The Community script disconnects its Graph context after a successful
+        # import/assignment. A second membership check here would therefore turn
+        # an otherwise successful registration into a false failure.
         $RebootBtn.IsEnabled = $true
         $StatusTxt.Text = "GEREED! Autopilot-import en -Assign zijn succesvol afgerond."
         Write-ToolLog "GEREED. Herstart kan nu via knop 4."
