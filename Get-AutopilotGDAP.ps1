@@ -615,21 +615,27 @@ function Invoke-CommunityOnline {
     $source = Get-CommunityScriptPath
     $tempPath = Join-Path $env:TEMP ("Get-WindowsAutopilotInfoCommunity-{0}.ps1" -f ([guid]::NewGuid()))
     $scriptText = Get-Content -LiteralPath $source -Raw -ErrorAction Stop
+    # The current PSGallery script invokes Connect-ToGraph twice during -Online
+    # processing. Patch its internal Connect-MgGraph call, rather than letting
+    # it prompt with WAM after this tool has already authenticated the user.
     $reuseBlock = @'
                     $existingContext = Get-MgContext
-                    if ($existingContext -and $existingContext.TenantId -eq $Tenant) {
+                    if ($existingContext) {
                         $graph = $existingContext
-                        Write-Host "Using existing Graph session for tenant $Tenant"
+                        Write-Host "Using existing browser Graph session for tenant $($existingContext.TenantId)"
                     }
                     else {
-                        $graph = Connect-MgGraph -Scopes $scopes
+                        throw "No existing browser Graph session is available for the Community script."
                     }
 '@
-    $originalConnect = '$graph = Connect-MgGraph -Scopes $scopes'
-    if ($scriptText.Contains($originalConnect)) {
-        $scriptText = $scriptText.Replace($originalConnect, $reuseBlock.TrimEnd())
+    $connectRegex = [regex]::new('(?m)^\s*\$graph\s*=\s*Connect-MgGraph\s+-Scopes\s+\$scopes\s*$')
+    $patchedText = $connectRegex.Replace($scriptText, $reuseBlock.TrimEnd(), 1)
+    if ($patchedText -eq $scriptText) {
+        throw "De actuele Community-scriptversie heeft een onbekende Graph-loginstructuur. Er is niet naar WAM teruggevallen."
     }
-    $scriptText = $scriptText.Replace('setx MSAL_FORCE_WAM 1', '$env:MSAL_FORCE_WAM = "0"')
+    $scriptText = $patchedText
+    $scriptText = $scriptText.Replace('setx MSAL_FORCE_WAM 0', '# WAM disabled: existing browser Graph session is reused')
+    $scriptText = $scriptText.Replace('setx MSAL_FORCE_WAM 1', '# WAM setting is not changed by this tool')
     Set-Content -LiteralPath $tempPath -Value $scriptText -Encoding UTF8
 
     $dynamicGroups = @($Profile.groups | Where-Object { $_.isDynamic -and -not $_.isExclusion })
