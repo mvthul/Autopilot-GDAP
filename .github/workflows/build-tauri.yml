@@ -33,6 +33,16 @@ jobs:
         working-directory: tauri-app
         run: npm ci
 
+      # npm can omit a platform-specific optional package when package-lock.json
+      # was generated on another operating system. Tauri's CLI loads this native
+      # Windows binding at startup, so install the matching binding explicitly.
+      - name: Windows Tauri CLI-binding herstellen
+        working-directory: tauri-app
+        shell: pwsh
+        run: |
+          $tauriCliVersion = node -p "require('./node_modules/@tauri-apps/cli/package.json').version"
+          npm install --no-save --package-lock=false --include=optional "@tauri-apps/cli-win32-x64-msvc@$tauriCliVersion"
+
       - name: Portable EXE bouwen
         working-directory: tauri-app
         run: npm run tauri -- build --no-bundle --target x86_64-pc-windows-msvc
