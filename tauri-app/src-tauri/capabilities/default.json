@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Standaardrechten voor de CaptureTech Autopilot GDAP desktop-app.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

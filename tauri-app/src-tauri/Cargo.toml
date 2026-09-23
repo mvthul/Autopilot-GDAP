@@ -1,0 +1,21 @@
+[package]
+name = "capturetech-autopilot-gdap"
+version = "0.1.0"
+description = "CaptureTech Autopilot GDAP"
+authors = ["CaptureTech"]
+edition = "2021"
+rust-version = "1.77"
+
+[[bin]]
+name = "capturetech-autopilot-gdap"
+path = "src/main.rs"
+
+[build-dependencies]
+embed-resource = "3.0"
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+uuid = { version = "1", features = ["v4"] }

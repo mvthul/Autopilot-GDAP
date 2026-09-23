@@ -2,6 +2,39 @@
 
 WPF-tool voor IT-hulpmedewerkers om Windows Autopilot-apparaten via GDAP en Microsoft Graph aan klanttenants toe te voegen.
 
+## Nieuwe CaptureTech desktop-app
+
+Naast de bestaande PowerShell/WPF-tool staat er een moderne, portable Windows-desktop-app in [`tauri-app`](tauri-app). Deze gebruikt dezelfde browseraanmelding, delegated Graph-rechten en Autopilot-flow, maar heeft een CaptureTech-interface voor klantselectie, profielkeuze, groepsafhandeling, live voortgang en herstart.
+
+De eerste Tauri-release is bedoeld voor Windows 10/11 x64 en vraagt altijd administratorrechten. De EXE is portable: installatie is niet nodig. Windows SmartScreen kan een waarschuwing tonen zolang de EXE niet code-signed is.
+
+Benodigd op het apparaat:
+
+- Windows PowerShell 5.1 of nieuwer;
+- Microsoft Edge WebView2 Evergreen Runtime (standaard aanwezig op recente Windows 11-installaties);
+- internettoegang naar Microsoft-aanmelding, Microsoft Graph, Partner Center en PSGallery;
+- een actief GDAP/PIM-profiel volgens de rechtenmatrix hieronder.
+
+### Lokale ontwikkeling
+
+```powershell
+cd .\tauri-app
+npm install
+npm run tauri dev
+```
+
+De browser-preview van `npm run dev` gebruikt veilige voorbeelddata. De werkelijke Microsoft-, Graph- en PowerShell-koppeling is alleen beschikbaar vanuit de gebouwde Tauri-desktopapp.
+
+### Portable EXE publiceren
+
+Een GitHub Actions-workflow bouwt de Windows x64-EXE op een Windows-runner. Publiceer een release door een tag in dit patroon te pushen:
+
+```text
+tauri-v0.1.0
+```
+
+De workflow voegt `capturetech-autopilot-gdap.exe` toe aan de bijbehorende GitHub Release. De huidige `Get-AutopilotGDAP.ps1` blijft beschikbaar als fallback voor OOBE, herstel en diagnose.
+
 ## Eerste inrichting
 
 De tool gebruikt een eigen multi-tenant App Registration van IT-Hulp. Er worden geen secrets opgeslagen of gepubliceerd.
