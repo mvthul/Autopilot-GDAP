@@ -9,7 +9,7 @@ CaptureTech-toolset voor IT-hulpmedewerkers om Windows Autopilot-apparaten via G
 
 Naast de bestaande PowerShell/WPF-tool staat er een moderne, portable Windows-desktop-app in [`tauri-app`](tauri-app). Deze gebruikt dezelfde browseraanmelding, delegated Graph-rechten en Autopilot-flow, maar heeft een CaptureTech-interface voor klantselectie, profielkeuze, groepsafhandeling, live voortgang en herstart.
 
-De eerste Tauri-release is bedoeld voor Windows 10/11 x64 en vraagt altijd administratorrechten. De EXE is portable: installatie is niet nodig. Windows SmartScreen kan een waarschuwing tonen zolang de EXE niet code-signed is.
+De eerste Tauri-release is bedoeld voor Windows 10/11 x64 en vraagt altijd administratorrechten. De EXE is portable: installatie is niet nodig. Als Windows de EXE toch niet verhoogd start, toont de app een knop **Start opnieuw als administrator**; die opent de normale UAC-bevestiging en start dezelfde EXE opnieuw met een verhoogd token. Windows SmartScreen kan een waarschuwing tonen zolang de EXE niet code-signed is.
 
 Benodigd op het apparaat:
 
@@ -92,6 +92,8 @@ De app vraagt uitsluitend deze delegated Microsoft Graph-scopes aan:
 ### Eenmalig per klanttenant: app autoriseren
 
 De Enterprise Application **CaptureTech Autopilot GDAP** moet in iedere klanttenant bestaan en admin consent hebben voor de bovenstaande Graph-scopes. Hiervoor is een **Global Administrator van de klanttenant** nodig. Dit is noodzakelijk vóór een GDAP-beheerder de app in die klant kan gebruiken; zonder deze stap verschijnt `AADSTS90099`.
+
+In de Tauri-app verschijnt bij een ontbrekende consent een gerichte dialoog **Klant-app instellen**. Kies daarin **Klantinstelling starten** om alleen voor de geselecteerde tenant de vaste Microsoft admin-consentpagina te openen. De aanmelding wordt daarbij gecontroleerd teruggegeven aan de app; na acceptatie kies je **Opnieuw verbinden**. Ook vóór het verbinden is deze actie beschikbaar onder de geselecteerde klant. Er worden geen vrije URL's, WAM-logins of device codes gebruikt.
 
 > App-consent vervangt GDAP niet. Het autoriseert de applicatie; de handelingen blijven namens de aangemelde partnergebruiker en diens GDAP-rollen plaatsvinden.
 

@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 const ENGINE_SCRIPT: &str = include_str!("../../powershell/AutopilotGdap.Engine.psm1");
 const WORKER_SCRIPT: &str = include_str!("../../powershell/AutopilotGdap.Worker.ps1");
+const PUBLIC_CLIENT_ID: &str = "6a87f18c-ab0a-4ef9-bb1c-587ae884b8e0";
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,7 +70,10 @@ impl AppState {
             .ok_or_else(|| "De PowerShell-worker kon niet worden gestart.".to_string())?;
 
         if worker.busy.swap(true, Ordering::SeqCst) {
-            return Err("Er wordt al een Autopilot-actie uitgevoerd. Wacht tot deze is afgerond.".to_string());
+            return Err(
+                "Er wordt al een Autopilot-actie uitgevoerd. Wacht tot deze is afgerond."
+                    .to_string(),
+            );
         }
 
         let mut command = request.clone();
@@ -82,12 +86,12 @@ impl AppState {
             .lock()
             .map_err(|_| "De invoer van de PowerShell-worker is niet beschikbaar.".to_string())
             .and_then(|mut stdin| {
-                stdin
-                    .write_all(serialized.as_bytes())
-                    .map_err(|error| format!("De backendactie kon niet worden verstuurd: {error}"))?;
-                stdin
-                    .write_all(b"\n")
-                    .map_err(|error| format!("De backendactie kon niet worden verstuurd: {error}"))?;
+                stdin.write_all(serialized.as_bytes()).map_err(|error| {
+                    format!("De backendactie kon niet worden verstuurd: {error}")
+                })?;
+                stdin.write_all(b"\n").map_err(|error| {
+                    format!("De backendactie kon niet worden verstuurd: {error}")
+                })?;
                 stdin
                     .flush()
                     .map_err(|error| format!("De backendactie kon niet worden verstuurd: {error}"))
@@ -250,7 +254,8 @@ fn write_if_changed(path: &Path, contents: &str) -> Result<(), String> {
     if fs::read_to_string(path).ok().as_deref() == Some(contents) {
         return Ok(());
     }
-    fs::write(path, contents).map_err(|error| format!("Runtimebestand kon niet worden geschreven: {error}"))
+    fs::write(path, contents)
+        .map_err(|error| format!("Runtimebestand kon niet worden geschreven: {error}"))
 }
 
 fn validate_request(request: &FrontendRequest) -> Result<(), String> {
@@ -273,7 +278,10 @@ fn validate_request(request: &FrontendRequest) -> Result<(), String> {
             Uuid::parse_str(tenant_id).map_err(|_| "De klanttenant-ID is ongeldig.".to_string())?;
         }
         "registerDevice" => {
-            validate_allowed_fields(object, &["profileId", "staticGroupId", "hostname", "verbose"])?;
+            validate_allowed_fields(
+                object,
+                &["profileId", "staticGroupId", "hostname", "verbose"],
+            )?;
             let profile_id = object
                 .get("profileId")
                 .and_then(Value::as_str)
@@ -323,6 +331,111 @@ fn validate_allowed_fields(
     ))
 }
 
+fn validate_customer_tenant(tenant_id: &str) -> Result<(), String> {
+    Uuid::parse_str(tenant_id).map_err(|_| "De klanttenant-ID is ongeldig.".to_string())?;
+    Ok(())
+}
+
+fn browser_cancellation_path() -> PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("TEMP").map(PathBuf::from))
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("CaptureTech")
+        .join("AutopilotGDAP")
+        .join("browser-auth.cancel")
+}
+
+fn cancel_browser_authorization() -> Result<(), String> {
+    let path = browser_cancellation_path();
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Het pad voor de browseraanmelding is ongeldig.".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("De browseraanmelding kon niet worden onderbroken: {error}"))?;
+    fs::write(&path, b"customer-consent")
+        .map_err(|error| format!("De browseraanmelding kon niet worden onderbroken: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn shell_execute(operation: &str, target: &std::ffi::OsStr) -> Result<(), String> {
+    use std::{
+        ffi::{c_void, OsStr},
+        os::windows::ffi::OsStrExt,
+        ptr,
+    };
+
+    #[link(name = "shell32")]
+    extern "system" {
+        fn ShellExecuteW(
+            hwnd: *mut c_void,
+            operation: *const u16,
+            file: *const u16,
+            parameters: *const u16,
+            directory: *const u16,
+            show_command: i32,
+        ) -> isize;
+    }
+
+    fn wide(value: &OsStr) -> Vec<u16> {
+        value.encode_wide().chain(std::iter::once(0)).collect()
+    }
+
+    let operation = wide(OsStr::new(operation));
+    let target = wide(target);
+    let result = unsafe {
+        ShellExecuteW(
+            ptr::null_mut(),
+            operation.as_ptr(),
+            target.as_ptr(),
+            ptr::null(),
+            ptr::null(),
+            1,
+        )
+    };
+    if result <= 32 {
+        return Err(format!(
+            "Windows kon de gevraagde actie niet starten (ShellExecute-code {result})."
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn open_in_default_browser(url: &str) -> Result<(), String> {
+    shell_execute("open", std::ffi::OsStr::new(url))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn open_in_default_browser(_url: &str) -> Result<(), String> {
+    Err("Klantinstelling openen wordt alleen door de Windows-app ondersteund.".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn relaunch_as_administrator(app: AppHandle) -> Result<(), String> {
+    use std::time::Duration;
+
+    let executable = std::env::current_exe()
+        .map_err(|error| format!("Het uitvoerbare bestand kon niet worden bepaald: {error}"))?;
+    shell_execute("runas", executable.as_os_str())?;
+
+    // Give the invoke response time to reach the frontend before closing the
+    // non-elevated instance. The newly started process gets its own UAC token.
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(250));
+        app.exit(0);
+    });
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn relaunch_as_administrator(_app: AppHandle) -> Result<(), String> {
+    Err(
+        "Opnieuw starten als administrator wordt alleen door de Windows-app ondersteund."
+            .to_string(),
+    )
+}
+
 #[tauri::command]
 fn worker_request(
     app: AppHandle,
@@ -332,12 +445,49 @@ fn worker_request(
     state.submit(&app, &request)
 }
 
+#[tauri::command]
+fn restart_as_administrator(app: AppHandle) -> Result<(), String> {
+    relaunch_as_administrator(app)
+}
+
+#[tauri::command]
+fn open_customer_consent(tenant_id: String, cancel_pending_login: bool) -> Result<(), String> {
+    validate_customer_tenant(&tenant_id)?;
+    let consent_url = format!(
+        "https://login.microsoftonline.com/{tenant_id}/adminconsent?client_id={PUBLIC_CLIENT_ID}&redirect_uri=http%3A%2F%2Flocalhost"
+    );
+    open_in_default_browser(&consent_url)?;
+    if cancel_pending_login {
+        cancel_browser_authorization()?;
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(AppState {
             worker: Mutex::new(None),
         })
-        .invoke_handler(tauri::generate_handler![worker_request])
+        .invoke_handler(tauri::generate_handler![
+            worker_request,
+            restart_as_administrator,
+            open_customer_consent
+        ])
         .run(tauri::generate_context!())
         .expect("CaptureTech Autopilot GDAP kon niet worden gestart");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_customer_tenant;
+
+    #[test]
+    fn accepts_a_valid_customer_tenant_id() {
+        assert!(validate_customer_tenant("609ba4a6-ac45-4a08-b108-54f46f635e6d").is_ok());
+    }
+
+    #[test]
+    fn rejects_an_invalid_customer_tenant_id() {
+        assert!(validate_customer_tenant("not-a-tenant").is_err());
+    }
 }

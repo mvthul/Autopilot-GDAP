@@ -109,6 +109,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .notice { display: flex; align-items: flex-start; gap: 10px; max-width: 1140px; margin: 23px auto -5px; padding: 13px 16px; border-radius: 10px; font-size: 13px; line-height: 1.45; }
 .notice.warning { border: 1px solid #ecd796; background: #fff9e4; color: #745609; }
 .notice.error { border: 1px solid #f4bdc7; background: #fff3f5; color: #9d2338; }
+.notice-copy { display: flex; align-items: center; flex: 1; justify-content: space-between; gap: 16px; }
+.notice-action { display: inline-flex; align-items: center; flex: 0 0 auto; gap: 7px; padding: 7px 11px; border: 1px solid currentColor; border-radius: 999px; background: transparent; color: inherit; font-family: Mont, Roboto, sans-serif; font-size: 11px; font-weight: 700; }
+.notice-action:not(:disabled):hover { background: rgba(116,86,9,.08); }
 .notice-close { margin-left: auto; border: 0; background: transparent; color: inherit; font-size: 22px; line-height: .7; }
 
 .content-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 280px); gap: 22px; width: min(100%, 1140px); margin: clamp(24px, 4vw, 40px) auto 0; }
@@ -131,6 +134,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .button.outline { border-color: var(--ink); background: #fff; color: var(--ink); }
 .button.outline:not(:disabled):hover { border-color: var(--blue); background: var(--blue); }
 .button.ghost { background: #f1f1f1; color: #222; }
+.customer-setup-link { display: inline-flex; align-items: center; gap: 7px; margin: 15px 0 0; padding: 0; border: 0; background: transparent; color: #4a4a4a; font-family: Mont, Roboto, sans-serif; font-size: 11px; font-weight: 700; text-decoration: underline; }
+.customer-setup-link:not(:disabled):hover { color: var(--red); }
 .hint { margin: 15px 0 0; color: #808080; font-size: 12px; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -221,7 +226,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .dialog-icon { display: grid; width: 48px; height: 48px; place-items: center; border-radius: 50%; background: #fff1f3; color: var(--red); }
 .dialog h2 { margin: 19px 0 10px; font-size: 27px; letter-spacing: -.04em; }
 .dialog p { margin: 0; color: #666; font-size: 14px; line-height: 1.55; }
+.dialog .dialog-note { margin-top: 14px; padding: 11px 12px; border-radius: 10px; background: #fff9e4; color: #745609; font-size: 12px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 28px; }
+.dialog-actions .button.primary { margin-top: 0; }
 
 @media (max-width: 1120px) {
   .sidebar { flex-basis: 240px; padding-inline: 20px; }
@@ -266,6 +273,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .main-card { padding: 24px 20px; border-radius: 14px; }
   .status-column { grid-template-columns: minmax(0, 1fr); }
   .restart-card { align-items: flex-start; flex-direction: column; }
+  .notice-copy { align-items: flex-start; flex-direction: column; gap: 9px; }
 }
 
 @media (max-width: 920px) and (max-height: 660px) {
@@ -288,12 +296,14 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .sidebar-copy > p:last-child, .sidebar-footer { display: none; }
   .step-link { min-height: 50px; }
   .topbar { min-height: 86px; }
-  .workspace { padding-bottom: 28px; }
+  .workspace { padding-bottom: 24px; }
   .content-grid { margin-top: 24px; }
   .main-card { padding: 28px 34px; }
   .main-card h2 { font-size: 32px; }
   .feature-row { padding: 12px 0; }
   .button.primary { margin-top: 22px; }
+  .customer-list { max-height: min(180px, 27dvh); }
+  .customer-setup-link { margin-top: 10px; }
   .hint { margin-top: 10px; }
   .status-column { gap: 14px; }
   .device-card, .log-card { padding: 16px; }
@@ -308,4 +318,21 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .sidebar { flex-basis: 220px; padding: 20px; }
   .sidebar-copy { display: none; }
   .step-link { min-height: 47px; }
+  .workspace { padding-bottom: 12px; }
+  .topbar { min-height: 70px; }
+  .content-grid { margin-top: 12px; }
+  .main-card { padding: 20px 28px; }
+  .main-card h2 { margin-bottom: 10px; font-size: 28px; }
+  .lead { margin-bottom: 12px; font-size: 14px; }
+  .field-label { margin: 14px 0 6px; }
+  .customer-list { max-height: min(135px, 23dvh); margin-top: 8px; }
+  .button.primary { margin-top: 14px; }
+  .customer-setup-link { margin-top: 7px; }
+  .hint { margin-top: 6px; font-size: 11px; }
+  .status-column { gap: 10px; }
+  .device-card, .log-card { padding: 12px; }
+  .device-card dl { margin-top: 9px; }
+  .device-card dl div { padding: 5px 0; }
+  .log-list { min-height: 55px; max-height: 70px; margin-top: 8px; }
+  .technical-toggle { margin-top: 7px; }
 }

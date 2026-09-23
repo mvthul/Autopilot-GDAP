@@ -19,6 +19,8 @@ import {
   getDemoLogs,
   getDemoResult,
   isDesktopApp,
+  openCustomerConsent,
+  restartAsAdministrator,
   sendWorkerRequest,
   subscribeWorkerEvents,
 } from "./lib/backend";
@@ -35,7 +37,13 @@ import type {
   WorkflowStep,
 } from "./types";
 
-type Pending = { id: string; action: WorkerRequest["action"] };
+type Pending = { id: string; action: WorkerRequest["action"]; customer?: Customer };
+
+type CustomerConsentDialog = {
+  customer: Customer;
+  waitingForLogin: boolean;
+  setupStarted: boolean;
+};
 
 const steps: Array<{ id: WorkflowStep; number: string; title: string; caption: string }> = [
   { id: "login", number: "01", title: "Aanmelden", caption: "IT-Hulp-account" },
@@ -73,6 +81,10 @@ function getGroupDecision(profile: Profile | undefined, selectedCandidate?: Grou
   return `Na import wordt “${selectedCandidate.name}” als statische groepsactie uitgevoerd.`;
 }
 
+function needsCustomerConsent(message: string) {
+  return /AADSTS90099|AADSTS700016|AADSTS65001|not been authorized|admin consent|consent|application.*not found|aanmelding.*(afgebroken|onderbroken)|canceled|cancelled|closed|failed/i.test(message);
+}
+
 export function App() {
   const [step, setStep] = useState<WorkflowStep>("login");
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
@@ -86,12 +98,17 @@ export function App() {
   const [verbose, setVerbose] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
   const pendingRef = useRef<Pending | null>(null);
+  const customersRef = useRef<Customer[]>([]);
   const [nextAction, setNextAction] = useState<WorkerRequest | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [error, setError] = useState("");
   const [registration, setRegistration] = useState<RegisterResult | null>(null);
   const [showTechnicalLog, setShowTechnicalLog] = useState(false);
   const [confirmRestart, setConfirmRestart] = useState(false);
+  const [elevating, setElevating] = useState(false);
+  const [customerConsentDialog, setCustomerConsentDialog] = useState<CustomerConsentDialog | null>(null);
+  const [customerConsentPromptedRequest, setCustomerConsentPromptedRequest] = useState<string | null>(null);
+  const [startingCustomerConsent, setStartingCustomerConsent] = useState(false);
 
   const selectedCustomer = customers.find((customer) => customer.tenantId === selectedCustomerId);
   const selectedProfile = profiles.find((profile) => profile.profileId === selectedProfileId);
@@ -129,12 +146,14 @@ export function App() {
           return;
         case "loadCustomers": {
           const loaded = (data as { customers?: Customer[] }).customers ?? [];
+          customersRef.current = loaded;
           setCustomers(loaded);
           setStep("customer");
           appendLog(`${loaded.length} klant${loaded.length === 1 ? "" : "en"} geladen vanuit Partner Center.`, "success");
           return;
         }
         case "connectCustomer":
+          setCustomerConsentDialog(null);
           appendLog("Klantcontext is geverifieerd. Autopilot-profielen worden geladen.", "success");
           setNextAction({ action: "loadProfiles", payload: {} });
           return;
@@ -177,6 +196,16 @@ export function App() {
       setPending(null);
       if (!event.ok) {
         const message = event.error ?? "De bewerking is niet voltooid.";
+        if (active.action === "connectCustomer" && active.customer && needsCustomerConsent(message)) {
+          const customer = active.customer;
+          setCustomerConsentDialog((current) => ({
+            customer,
+            waitingForLogin: false,
+            setupStarted: current?.customer.tenantId === customer.tenantId && current?.setupStarted === true,
+          }));
+          appendLog("De klant-app heeft eenmalige autorisatie nodig voordat de GDAP-verbinding kan worden geopend.", "warning");
+          return;
+        }
         setError(message);
         appendLog(message, "error");
         return;
@@ -192,7 +221,13 @@ export function App() {
       setError("");
       const requestId = crypto.randomUUID();
       const requestWithId = { ...request, requestId } as WorkerRequest;
-      const active = { id: requestId, action: request.action } as Pending;
+      const active = {
+        id: requestId,
+        action: request.action,
+        customer: request.action === "connectCustomer"
+          ? customersRef.current.find((customer) => customer.tenantId === request.payload.tenantId)
+          : undefined,
+      } as Pending;
       pendingRef.current = active;
       setPending(active);
 
@@ -226,6 +261,10 @@ export function App() {
   );
 
   useEffect(() => {
+    customersRef.current = customers;
+  }, [customers]);
+
+  useEffect(() => {
     let unlisten: (() => void) | null = null;
     let disposed = false;
     void (async () => {
@@ -244,6 +283,21 @@ export function App() {
     void dispatch(nextAction);
   }, [busy, dispatch, nextAction]);
 
+  useEffect(() => {
+    if (pending?.action !== "connectCustomer" || !pending.customer || customerConsentPromptedRequest === pending.id) return;
+    const pendingRequest = pending;
+    const timeout = window.setTimeout(() => {
+      if (pendingRef.current?.id !== pendingRequest.id) return;
+      setCustomerConsentPromptedRequest(pendingRequest.id);
+      setCustomerConsentDialog({
+        customer: pendingRequest.customer!,
+        waitingForLogin: true,
+        setupStarted: false,
+      });
+    }, 20000);
+    return () => window.clearTimeout(timeout);
+  }, [customerConsentPromptedRequest, pending]);
+
   const selectProfile = (profileId: string) => {
     const profile = profiles.find((entry) => entry.profileId === profileId);
     setSelectedProfileId(profileId);
@@ -253,6 +307,43 @@ export function App() {
   const connectCustomer = () => {
     if (!selectedCustomer) return;
     void dispatch({ action: "connectCustomer", payload: { tenantId: selectedCustomer.tenantId } });
+  };
+
+  const requestElevation = async () => {
+    setError("");
+    setElevating(true);
+    try {
+      await restartAsAdministrator();
+      appendLog("Windows vraagt om bevestiging om de app als administrator opnieuw te starten.", "info");
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError(message);
+      appendLog(message, "error");
+    } finally {
+      setElevating(false);
+    }
+  };
+
+  const startCustomerSetup = async () => {
+    const customer = customerConsentDialog?.customer;
+    if (!customer) return;
+    setError("");
+    setStartingCustomerConsent(true);
+    try {
+      await openCustomerConsent(customer.tenantId, pendingRef.current?.action === "connectCustomer");
+      appendLog(`De klantinstelling voor ${customer.customerName} is in de browser geopend.`, "info");
+      setCustomerConsentDialog((current) => current && ({
+        ...current,
+        waitingForLogin: false,
+        setupStarted: true,
+      }));
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      setError(message);
+      appendLog(message, "error");
+    } finally {
+      setStartingCustomerConsent(false);
+    }
   };
 
   const registerDevice = () => {
@@ -332,7 +423,13 @@ export function App() {
         {!preflight?.isAdministrator && preflight && (
           <div className="notice warning">
             <AlertCircle size={20} />
-            <span>Deze app moet als administrator worden gestart om hardwaregegevens uit te lezen en een herstart uit te voeren.</span>
+            <div className="notice-copy">
+              <span>Deze app moet als administrator worden gestart om hardwaregegevens uit te lezen en een herstart uit te voeren.</span>
+              <button className="notice-action" type="button" disabled={elevating} onClick={() => void requestElevation()}>
+                {elevating ? <LoaderCircle className="spin" size={15} /> : <ShieldCheck size={15} />}
+                {elevating ? "UAC openen…" : "Start opnieuw als administrator"}
+              </button>
+            </div>
           </div>
         )}
 
@@ -398,6 +495,16 @@ export function App() {
                   {busy ? <LoaderCircle className="spin" size={18} /> : <ArrowRight size={18} />}
                   {busy ? "Klantcontext openen…" : "Verbind met klanttenant"}
                 </button>
+                <button
+                  className="customer-setup-link"
+                  type="button"
+                  disabled={!selectedCustomer || busy}
+                  onClick={() => selectedCustomer && setCustomerConsentDialog({ customer: selectedCustomer, waitingForLogin: false, setupStarted: false })}
+                >
+                  <FileText size={16} />
+                  App-toegang voor deze klant instellen
+                </button>
+                <p className="hint">Alleen nodig als de klanttenant de CaptureTech Autopilot GDAP-app nog niet eenmalig heeft geautoriseerd.</p>
               </>
             )}
 
@@ -542,6 +649,46 @@ export function App() {
             <div className="dialog-actions">
               <button className="button ghost" type="button" onClick={() => setConfirmRestart(false)}>Annuleren</button>
               <button className="button primary" type="button" onClick={() => { setConfirmRestart(false); void dispatch({ action: "restartDevice", payload: {} }); }}>Ja, herstart</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {customerConsentDialog && (
+        <div className="dialog-backdrop" role="presentation">
+          <section className="dialog" role="dialog" aria-modal="true" aria-labelledby="customer-consent-heading">
+            <div className="dialog-icon"><FileText size={24} /></div>
+            <h2 id="customer-consent-heading">{customerConsentDialog.setupStarted ? "Klantinstelling geopend" : "Klant-app instellen"}</h2>
+            {customerConsentDialog.setupStarted ? (
+              <p>De tenant-specifieke admin-consentpagina is in de standaardbrowser geopend. Laat een Global Administrator van {customerConsentDialog.customer.customerName} de gevraagde machtigingen accepteren. Kom daarna hier terug en verbind opnieuw.</p>
+            ) : (
+              <p>De klanttenant {customerConsentDialog.customer.customerName} heeft de CaptureTech Autopilot GDAP-app nog niet geautoriseerd, of de browseraanmelding is afgebroken. Laat een Global Administrator van de klanttenant de eenmalige consent verlenen.</p>
+            )}
+            {customerConsentDialog.waitingForLogin && !customerConsentDialog.setupStarted && (
+              <p className="dialog-note">De browseraanmelding wacht nog. Zie je AADSTS90099, “not authorized” of een consentfout in de browser, kies dan hieronder Klantinstelling starten.</p>
+            )}
+            <div className="dialog-actions">
+              <button className="button ghost" type="button" onClick={() => setCustomerConsentDialog(null)}>
+                {customerConsentDialog.waitingForLogin && !customerConsentDialog.setupStarted ? "Doorgaan met aanmelden" : "Sluiten"}
+              </button>
+              {customerConsentDialog.setupStarted ? (
+                <button
+                  className="button outline"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => {
+                    setCustomerConsentDialog(null);
+                    connectCustomer();
+                  }}
+                >
+                  Opnieuw verbinden
+                </button>
+              ) : (
+                <button className="button primary" type="button" disabled={startingCustomerConsent} onClick={() => void startCustomerSetup()}>
+                  {startingCustomerConsent ? <LoaderCircle className="spin" size={18} /> : <ArrowRight size={18} />}
+                  {startingCustomerConsent ? "Browser openen…" : "Klantinstelling starten"}
+                </button>
+              )}
             </div>
           </section>
         </div>

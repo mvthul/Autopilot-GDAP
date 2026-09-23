@@ -25,6 +25,7 @@ function New-AutopilotGdapState {
         PartnerTenantId = $script:PartnerTenantId
         PartnerCenterTokenPath = Join-Path $tokenFolder "partnercenter.v1.token"
         PartnerCenterAccessToken = $null
+        BrowserCancellationPath = Join-Path $tokenFolder "browser-auth.cancel"
         Customers = @()
         Profiles = @()
         TargetTenantId = ""
@@ -96,7 +97,15 @@ function Invoke-BrowserAuthorizationCodeFlow {
     )
 
     $listener = New-Object System.Net.HttpListener
+    $cancellationPath = [string]$State.BrowserCancellationPath
     try {
+        # A separate, native Tauri command can place this marker when the
+        # operator chooses to open the customer-specific admin-consent page.
+        # Remove an old marker before every browser flow so a previous action
+        # can never cancel a new login.
+        if (-not [string]::IsNullOrWhiteSpace($cancellationPath)) {
+            Remove-Item -LiteralPath $cancellationPath -Force -ErrorAction SilentlyContinue
+        }
         $listener.Prefixes.Add($RedirectUri)
         $listener.Start()
     }
@@ -109,8 +118,15 @@ function Invoke-BrowserAuthorizationCodeFlow {
         Write-EngineEvent -State $State -Message "$Purpose opent in je standaardbrowser. Meld aan met je IT-Hulp-account." -Level info
         Start-Process $AuthorizeUri -ErrorAction Stop
         $result = $listener.BeginGetContext($null, $null)
-        if (-not $result.AsyncWaitHandle.WaitOne(300000)) {
-            throw "De browseraanmelding duurde langer dan vijf minuten."
+        $timeoutAt = [DateTime]::UtcNow.AddMinutes(5)
+        while (-not $result.AsyncWaitHandle.WaitOne(250)) {
+            if (-not [string]::IsNullOrWhiteSpace($cancellationPath) -and (Test-Path -LiteralPath $cancellationPath)) {
+                Remove-Item -LiteralPath $cancellationPath -Force -ErrorAction SilentlyContinue
+                throw "$Purpose is onderbroken om de klant-app in te stellen. Voltooi de eenmalige admin consent en kies daarna opnieuw Verbinden."
+            }
+            if ([DateTime]::UtcNow -ge $timeoutAt) {
+                throw "De browseraanmelding duurde langer dan vijf minuten."
+            }
         }
         $context = $listener.EndGetContext($result)
         $query = $context.Request.QueryString
@@ -133,6 +149,9 @@ function Invoke-BrowserAuthorizationCodeFlow {
         return & $ExchangeCode ([string]$query["code"])
     }
     finally {
+        if (-not [string]::IsNullOrWhiteSpace($cancellationPath)) {
+            Remove-Item -LiteralPath $cancellationPath -Force -ErrorAction SilentlyContinue
+        }
         if ($listener.IsListening) { $listener.Stop() }
         $listener.Close()
     }

@@ -127,6 +127,16 @@ export async function sendWorkerRequest(request: WorkerRequest): Promise<string>
   return request.requestId ?? crypto.randomUUID();
 }
 
+export async function restartAsAdministrator(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("restart_as_administrator");
+}
+
+export async function openCustomerConsent(tenantId: string, cancelPendingLogin: boolean): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>("open_customer_consent", { tenantId, cancelPendingLogin });
+}
+
 export function getDemoResult(request: WorkerRequest): unknown {
   switch (request.action) {
     case "preflight":
