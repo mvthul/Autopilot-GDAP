@@ -5,8 +5,8 @@
 De Enterprise Application is nog niet in de klanttenant geautoriseerd. Laat een
 Global Administrator van de klanttenant de consentflow afronden. De Tauri-app
 toont hiervoor **Klant-app instellen**; de knop **Klantinstelling starten** opent
-de vaste tenant-specifieke Microsoft admin-consentpagina en geeft de vastgelopen
-browseraanmelding terug aan de app. Kies na acceptatie **Opnieuw verbinden**.
+de vaste tenant-specifieke Microsoft admin-consentpagina. Kies na acceptatie
+**Opnieuw verbinden**.
 
 ## `403 Forbidden` bij profielen of groepen
 
@@ -14,11 +14,21 @@ Controleer of de GDAP-relatie actief is en of het IT-Hulp-account de juiste
 PIM-activatie heeft: minimaal Intune Administrator en, voor groepen, Groups
 Administrator.
 
-## Browsercallback werkt niet
+## WAM kan niet starten
+
+Op een normale Windows-desktop gebruikt de Tauri-app Windows Web Account Manager
+(WAM). Controleer dat de app in een interactieve Windows-sessie draait en voer
+`Setup-AutopilotApp.ps1` opnieuw uit als de broker redirect URI
+`ms-appx-web://Microsoft.AAD.BrokerPlugin/<CLIENT-ID>` ontbreekt. Kies
+**Wissel account** om alleen de appsessie te wissen; Windows-accounts worden
+niet afgemeld.
+
+## Browsercallback werkt niet tijdens OOBE
 
 Sluit andere toolinstanties en controleer of poort `8765` (Partner Center) of
-`8766` (Graph) niet door een ander proces wordt gebruikt. De tool gebruikt de
-systeembrowser en geen device code.
+`8766` (Graph) niet door een ander proces wordt gebruikt. Tijdens OOBE gebruikt
+de tool de systeembrowser en geen device code; buiten OOBE gebruikt de Tauri-app
+WAM.
 
 ## Tauri-app start niet in OOBE
 

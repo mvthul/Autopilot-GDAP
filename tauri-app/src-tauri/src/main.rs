@@ -135,6 +135,15 @@ impl WorkerProcess {
         {
             use std::os::windows::process::CommandExt;
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            let parent_window_handle = app
+                .get_webview_window("main")
+                .and_then(|window| window.hwnd().ok())
+                .map(|window_handle| (window_handle.0 as usize).to_string())
+                .ok_or_else(|| {
+                    "Het Tauri-venster kon niet aan Windows Web Account Manager worden gekoppeld."
+                        .to_string()
+                })?;
+            command.env("CAPTURETECH_PARENT_HWND", parent_window_handle);
             command.creation_flags(CREATE_NO_WINDOW);
         }
 
@@ -264,7 +273,8 @@ fn validate_request(request: &FrontendRequest) -> Result<(), String> {
         .as_object()
         .ok_or_else(|| "De backendactie bevat geen geldig gegevensobject.".to_string())?;
     match request.action.as_str() {
-        "preflight" | "loginPartner" | "loadCustomers" | "loadProfiles" | "restartDevice" => {
+        "preflight" | "loginPartner" | "loadCustomers" | "loadProfiles" | "resetSession"
+        | "restartDevice" => {
             if !object.is_empty() {
                 return Err("Deze backendactie accepteert geen extra parameters.".to_string());
             }
@@ -479,7 +489,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_customer_tenant;
+    use super::{validate_customer_tenant, validate_request, FrontendRequest};
+    use serde_json::json;
 
     #[test]
     fn accepts_a_valid_customer_tenant_id() {
@@ -489,5 +500,25 @@ mod tests {
     #[test]
     fn rejects_an_invalid_customer_tenant_id() {
         assert!(validate_customer_tenant("not-a-tenant").is_err());
+    }
+
+    #[test]
+    fn accepts_reset_session_without_payload() {
+        let request = FrontendRequest {
+            request_id: None,
+            action: "resetSession".to_string(),
+            payload: json!({}),
+        };
+        assert!(validate_request(&request).is_ok());
+    }
+
+    #[test]
+    fn rejects_reset_session_with_payload() {
+        let request = FrontendRequest {
+            request_id: None,
+            action: "resetSession".to_string(),
+            payload: json!({ "tenantId": "609ba4a6-ac45-4a08-b108-54f46f635e6d" }),
+        };
+        assert!(validate_request(&request).is_err());
     }
 }

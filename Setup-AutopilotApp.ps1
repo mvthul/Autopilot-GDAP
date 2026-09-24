@@ -145,5 +145,5 @@ if ($consentExitCode -ne 0) {
 Write-Host ""
 Write-Host "Open daarna deze URL voor Partner Center-klantlijst-consent:" -ForegroundColor Green
 Write-Host $partnerCenterConsentUrl
-Write-Host "De runtime-tool gebruikt normale browser-aanmelding via $partnerCenterRedirect en $graphRedirect; WAM en device code worden niet gebruikt." -ForegroundColor Yellow
+Write-Host "De Tauri-app gebruikt WAM op normale Windows-desktops en browser-SSO tijdens OOBE. De broker redirect URI is ingesteld; device code wordt niet gebruikt." -ForegroundColor Yellow
 Write-Host "De client-id moet daarna in Get-AutopilotGDAP.ps1 worden ingevuld op PublicClientId." -ForegroundColor Yellow

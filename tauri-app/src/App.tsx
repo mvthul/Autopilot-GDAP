@@ -10,6 +10,7 @@ import {
   LoaderCircle,
   LockKeyhole,
   Power,
+  RefreshCw,
   Search,
   ShieldCheck,
   TerminalSquare,
@@ -26,7 +27,9 @@ import {
 } from "./lib/backend";
 import type {
   Customer,
+  CustomerConnectionResult,
   GroupCandidate,
+  LoginResult,
   LogEntry,
   PreflightResult,
   Profile,
@@ -35,13 +38,13 @@ import type {
   WorkerEvent,
   WorkerRequest,
   WorkflowStep,
+  AuthMode,
 } from "./types";
 
 type Pending = { id: string; action: WorkerRequest["action"]; customer?: Customer };
 
 type CustomerConsentDialog = {
   customer: Customer;
-  waitingForLogin: boolean;
   setupStarted: boolean;
 };
 
@@ -81,13 +84,11 @@ function getGroupDecision(profile: Profile | undefined, selectedCandidate?: Grou
   return `Na import wordt “${selectedCandidate.name}” als statische groepsactie uitgevoerd.`;
 }
 
-function needsCustomerConsent(message: string) {
-  return /AADSTS90099|AADSTS700016|AADSTS65001|not been authorized|admin consent|consent|application.*not found|aanmelding.*(afgebroken|onderbroken)|canceled|cancelled|closed|failed/i.test(message);
-}
-
 export function App() {
   const [step, setStep] = useState<WorkflowStep>("login");
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
+  const [sessionAccount, setSessionAccount] = useState("");
+  const [sessionAuthMode, setSessionAuthMode] = useState<AuthMode | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerSearch, setCustomerSearch] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
@@ -107,7 +108,6 @@ export function App() {
   const [confirmRestart, setConfirmRestart] = useState(false);
   const [elevating, setElevating] = useState(false);
   const [customerConsentDialog, setCustomerConsentDialog] = useState<CustomerConsentDialog | null>(null);
-  const [customerConsentPromptedRequest, setCustomerConsentPromptedRequest] = useState<string | null>(null);
   const [startingCustomerConsent, setStartingCustomerConsent] = useState(false);
 
   const selectedCustomer = customers.find((customer) => customer.tenantId === selectedCustomerId);
@@ -140,10 +140,19 @@ export function App() {
         case "preflight":
           setPreflight(data as PreflightResult);
           return;
-        case "loginPartner":
-          appendLog("IT-Hulp-account aangemeld. Partner Center-klanten worden opgehaald.", "success");
+        case "loginPartner": {
+          const result = data as LoginResult;
+          setSessionAccount(result.account);
+          setSessionAuthMode(result.authMode);
+          appendLog(
+            result.authMode === "wam"
+              ? "IT-Hulp-account is via Windows aangemeld. Partner Center-klanten worden stil opgehaald."
+              : "IT-Hulp-account is via de OOBE-browser aangemeld. Partner Center-klanten worden opgehaald.",
+            "success",
+          );
           setNextAction({ action: "loadCustomers", payload: {} });
           return;
+        }
         case "loadCustomers": {
           const loaded = (data as { customers?: Customer[] }).customers ?? [];
           customersRef.current = loaded;
@@ -152,11 +161,15 @@ export function App() {
           appendLog(`${loaded.length} klant${loaded.length === 1 ? "" : "en"} geladen vanuit Partner Center.`, "success");
           return;
         }
-        case "connectCustomer":
+        case "connectCustomer": {
+          const result = data as CustomerConnectionResult;
           setCustomerConsentDialog(null);
+          setSessionAccount((current) => result.account || current);
+          setSessionAuthMode(result.authMode);
           appendLog("Klantcontext is geverifieerd. Autopilot-profielen worden geladen.", "success");
           setNextAction({ action: "loadProfiles", payload: {} });
           return;
+        }
         case "loadProfiles": {
           const loaded = (data as { profiles?: Profile[] }).profiles ?? [];
           setProfiles(loaded);
@@ -173,6 +186,23 @@ export function App() {
           appendLog("Autopilot-import en profieltoewijzing zijn succesvol afgerond.", "success");
           return;
         }
+        case "resetSession":
+          setStep("login");
+          setCustomers([]);
+          setCustomerSearch("");
+          setSelectedCustomerId("");
+          setProfiles([]);
+          setSelectedProfileId("");
+          setSelectedGroupId("");
+          setHostname("");
+          setRegistration(null);
+          setCustomerConsentDialog(null);
+          setSessionAccount("");
+          setSessionAuthMode(null);
+          setNextAction(null);
+          setLogs([]);
+          appendLog("De appsessie is gewist. Kies opnieuw het gewenste IT-Hulp-account.", "info");
+          return;
         case "restartDevice":
           appendLog("De computer wordt opnieuw gestart.", "success");
           return;
@@ -195,19 +225,21 @@ export function App() {
       pendingRef.current = null;
       setPending(null);
       if (!event.ok) {
-        const message = event.error ?? "De bewerking is niet voltooid.";
-        if (active.action === "connectCustomer" && active.customer && needsCustomerConsent(message)) {
+        const workerError = event.error ?? { code: "operationFailed" as const, message: "De bewerking is niet voltooid." };
+        if (active.action === "connectCustomer" && active.customer && workerError.code === "customerConsentRequired") {
           const customer = active.customer;
           setCustomerConsentDialog((current) => ({
             customer,
-            waitingForLogin: false,
             setupStarted: current?.customer.tenantId === customer.tenantId && current?.setupStarted === true,
           }));
           appendLog("De klant-app heeft eenmalige autorisatie nodig voordat de GDAP-verbinding kan worden geopend.", "warning");
           return;
         }
-        setError(message);
-        appendLog(message, "error");
+        setError(workerError.message);
+        appendLog(workerError.message, workerError.code === "authCancelled" ? "warning" : "error");
+        if (workerError.details && workerError.details !== workerError.message) {
+          appendLog(workerError.details, "error", true);
+        }
         return;
       }
       handleResult(active.action, event.data);
@@ -283,21 +315,6 @@ export function App() {
     void dispatch(nextAction);
   }, [busy, dispatch, nextAction]);
 
-  useEffect(() => {
-    if (pending?.action !== "connectCustomer" || !pending.customer || customerConsentPromptedRequest === pending.id) return;
-    const pendingRequest = pending;
-    const timeout = window.setTimeout(() => {
-      if (pendingRef.current?.id !== pendingRequest.id) return;
-      setCustomerConsentPromptedRequest(pendingRequest.id);
-      setCustomerConsentDialog({
-        customer: pendingRequest.customer!,
-        waitingForLogin: true,
-        setupStarted: false,
-      });
-    }, 20000);
-    return () => window.clearTimeout(timeout);
-  }, [customerConsentPromptedRequest, pending]);
-
   const selectProfile = (profileId: string) => {
     const profile = profiles.find((entry) => entry.profileId === profileId);
     setSelectedProfileId(profileId);
@@ -307,6 +324,11 @@ export function App() {
   const connectCustomer = () => {
     if (!selectedCustomer) return;
     void dispatch({ action: "connectCustomer", payload: { tenantId: selectedCustomer.tenantId } });
+  };
+
+  const resetSession = () => {
+    if (busy) return;
+    void dispatch({ action: "resetSession", payload: {} });
   };
 
   const requestElevation = async () => {
@@ -330,11 +352,10 @@ export function App() {
     setError("");
     setStartingCustomerConsent(true);
     try {
-      await openCustomerConsent(customer.tenantId, pendingRef.current?.action === "connectCustomer");
+      await openCustomerConsent(customer.tenantId, false);
       appendLog(`De klantinstelling voor ${customer.customerName} is in de browser geopend.`, "info");
       setCustomerConsentDialog((current) => current && ({
         ...current,
-        waitingForLogin: false,
         setupStarted: true,
       }));
     } catch (caught) {
@@ -367,7 +388,9 @@ export function App() {
 
   const visibleLogs = logs.filter((entry) => showTechnicalLog || !entry.technical);
   const canRegister = Boolean(selectedProfile) && (!selectedProfile || selectedProfile.groupCandidates.length < 2 || Boolean(selectedGroupId));
-  const hasSessionDetails = Boolean(selectedCustomer || selectedProfile || registration || busy || visibleLogs.length > 0);
+  const hasSessionDetails = Boolean(sessionAccount || selectedCustomer || selectedProfile || registration || busy || visibleLogs.length > 0);
+  const usingOobeBrowser = (sessionAuthMode ?? preflight?.authMode) === "browserOobe";
+  const canStartLogin = !preflight || preflight.authMode === "browserOobe" || preflight.wamAvailable;
 
   return (
     <main className="app-shell">
@@ -433,6 +456,13 @@ export function App() {
           </div>
         )}
 
+        {preflight?.authMode === "wam" && !preflight.wamAvailable && (
+          <div className="notice error">
+            <AlertCircle size={20} />
+            <span>Windows Web Account Manager is niet beschikbaar voor dit venster. Start de app opnieuw in een normale interactieve Windows-sessie.</span>
+          </div>
+        )}
+
         {error && (
           <div className="notice error">
             <AlertCircle size={20} />
@@ -447,20 +477,27 @@ export function App() {
               <>
                 <p className="eyebrow">Stap 1 van 4</p>
                 <h2>Meld aan met je IT-Hulp-account</h2>
-                <p className="lead">Gebruik je normale werkaccount. De browser opent veilig voor Microsoft Graph en Partner Center.</p>
+                <p className="lead">
+                  {usingOobeBrowser
+                    ? "Windows Setup is actief. De browser gebruikt veilig dezelfde Microsoft SSO-sessie voor Graph en Partner Center."
+                    : "Windows toont één accountkiezer. Daarna gebruikt de app hetzelfde IT-Hulp-account stil voor Microsoft Graph en Partner Center."}
+                </p>
                 <div className="feature-row">
                   <div className="feature-icon"><LockKeyhole size={22} /></div>
-                  <div><strong>Geen device code</strong><span>De normale browseraanmelding wordt gebruikt.</span></div>
+                  <div>
+                    <strong>{usingOobeBrowser ? "Geen device code" : "Native Windows-aanmelding"}</strong>
+                    <span>{usingOobeBrowser ? "De normale browser-SSO wordt alleen tijdens OOBE gebruikt." : "Windows Web Account Manager opent boven deze app en keert hierna direct terug."}</span>
+                  </div>
                 </div>
                 <div className="feature-row">
                   <div className="feature-icon"><UserRoundCheck size={22} /></div>
-                  <div><strong>GDAP en PIM blijven leidend</strong><span>De tool gebruikt alleen jouw actieve delegated rechten.</span></div>
+                  <div><strong>GDAP en PIM blijven leidend</strong><span>De tool gebruikt alleen jouw actieve delegated rechten en vraagt niet opnieuw om een account tijdens registratie.</span></div>
                 </div>
-                <button className="button primary" type="button" disabled={busy} onClick={() => void dispatch({ action: "loginPartner", payload: {} })}>
+                <button className="button primary" type="button" disabled={busy || !canStartLogin} onClick={() => void dispatch({ action: "loginPartner", payload: {} })}>
                   {busy ? <LoaderCircle className="spin" size={18} /> : <ArrowRight size={18} />}
-                  {busy ? "Aanmelding voorbereiden…" : "Aanmelden met IT-Hulp-account"}
+                  {busy ? "Aanmelding voorbereiden…" : usingOobeBrowser ? "Aanmelden met IT-Hulp-account" : "Kies IT-Hulp-account"}
                 </button>
-                <p className="hint">Bij de eerste keer kan Partner Center ook om browserconsent vragen.</p>
+                <p className="hint">{usingOobeBrowser ? "Bij eerste gebruik kan Partner Center in de browser consent vragen." : "Bij Conditional Access, MFA of een klantconsent kan Windows of de browser aanvullende verificatie vragen."}</p>
               </>
             )}
 
@@ -499,7 +536,7 @@ export function App() {
                   className="customer-setup-link"
                   type="button"
                   disabled={!selectedCustomer || busy}
-                  onClick={() => selectedCustomer && setCustomerConsentDialog({ customer: selectedCustomer, waitingForLogin: false, setupStarted: false })}
+                  onClick={() => selectedCustomer && setCustomerConsentDialog({ customer: selectedCustomer, setupStarted: false })}
                 >
                   <FileText size={16} />
                   App-toegang voor deze klant instellen
@@ -612,11 +649,18 @@ export function App() {
               <p className="eyebrow">Sessie</p>
               <h3>Registratieoverzicht</h3>
               <dl>
+                <div><dt>IT-Hulp-account</dt><dd>{sessionAccount || "Nog niet aangemeld"}</dd></div>
+                <div><dt>Aanmelding</dt><dd>{sessionAuthMode === "wam" ? "Windows WAM" : sessionAuthMode === "browserOobe" ? "OOBE-browser" : "Nog niet gestart"}</dd></div>
                 <div><dt>Klant</dt><dd>{selectedCustomer?.customerName ?? "Nog niet gekozen"}</dd></div>
                 <div><dt>Profiel</dt><dd>{selectedProfile?.displayName ?? "Nog niet gekozen"}</dd></div>
                 <div><dt>Groep</dt><dd>{selectedCandidate?.name ?? (selectedProfile?.groupCandidates.length === 0 ? "Automatisch" : "Nog niet gekozen")}</dd></div>
                 <div><dt>Hostname</dt><dd>{hostname || "Automatisch"}</dd></div>
               </dl>
+              {sessionAccount && (
+                <button className="session-reset" type="button" disabled={busy} onClick={resetSession}>
+                  <RefreshCw size={15} /> Wissel account
+                </button>
+              )}
             </section>
 
             <section className={`content-card log-card ${visibleLogs.length === 0 && !busy ? "empty-log-card" : ""}`}>
@@ -662,15 +706,10 @@ export function App() {
             {customerConsentDialog.setupStarted ? (
               <p>De tenant-specifieke admin-consentpagina is in de standaardbrowser geopend. Laat een Global Administrator van {customerConsentDialog.customer.customerName} de gevraagde machtigingen accepteren. Kom daarna hier terug en verbind opnieuw.</p>
             ) : (
-              <p>De klanttenant {customerConsentDialog.customer.customerName} heeft de CaptureTech Autopilot GDAP-app nog niet geautoriseerd, of de browseraanmelding is afgebroken. Laat een Global Administrator van de klanttenant de eenmalige consent verlenen.</p>
-            )}
-            {customerConsentDialog.waitingForLogin && !customerConsentDialog.setupStarted && (
-              <p className="dialog-note">De browseraanmelding wacht nog. Zie je AADSTS90099, “not authorized” of een consentfout in de browser, kies dan hieronder Klantinstelling starten.</p>
+              <p>De klanttenant {customerConsentDialog.customer.customerName} heeft de CaptureTech Autopilot GDAP-app nog niet geautoriseerd. Laat een Global Administrator van de klanttenant de eenmalige consent verlenen.</p>
             )}
             <div className="dialog-actions">
-              <button className="button ghost" type="button" onClick={() => setCustomerConsentDialog(null)}>
-                {customerConsentDialog.waitingForLogin && !customerConsentDialog.setupStarted ? "Doorgaan met aanmelden" : "Sluiten"}
-              </button>
+              <button className="button ghost" type="button" onClick={() => setCustomerConsentDialog(null)}>Sluiten</button>
               {customerConsentDialog.setupStarted ? (
                 <button
                   className="button outline"

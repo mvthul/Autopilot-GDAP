@@ -2,6 +2,23 @@ export type WorkflowStep = "login" | "customer" | "configure" | "register" | "co
 
 export type LogLevel = "info" | "success" | "warning" | "error";
 
+export type AuthMode = "wam" | "browserOobe";
+
+export type WorkerErrorCode =
+  | "customerConsentRequired"
+  | "partnerCenterConsentRequired"
+  | "gdapPimDenied"
+  | "wamUnavailable"
+  | "authCancelled"
+  | "authenticationRequired"
+  | "operationFailed";
+
+export interface WorkerError {
+  code: WorkerErrorCode;
+  message: string;
+  details?: string;
+}
+
 export interface Customer {
   tenantId: string;
   customerName: string;
@@ -40,6 +57,22 @@ export interface PreflightResult {
   isAdministrator: boolean;
   powershellVersion: string;
   graphModuleInstalled: boolean;
+  authMode: AuthMode;
+  isOobe: boolean;
+  wamAvailable: boolean;
+}
+
+export interface LoginResult {
+  tenantId: string;
+  account: string;
+  authMode: AuthMode;
+  isOobe: boolean;
+}
+
+export interface CustomerConnectionResult {
+  tenantId: string;
+  account: string;
+  authMode: AuthMode;
 }
 
 export interface RegisterResult {
@@ -56,6 +89,7 @@ export type WorkerAction =
   | { action: "loadCustomers"; payload: Record<string, never> }
   | { action: "connectCustomer"; payload: { tenantId: string } }
   | { action: "loadProfiles"; payload: Record<string, never> }
+  | { action: "resetSession"; payload: Record<string, never> }
   | {
       action: "registerDevice";
       payload: { profileId: string; staticGroupId?: string; hostname?: string; verbose: boolean };
@@ -78,7 +112,7 @@ export interface WorkerEvent {
   };
   ok?: boolean;
   data?: unknown;
-  error?: string;
+  error?: WorkerError;
 }
 
 export interface LogEntry {

@@ -140,11 +140,33 @@ export async function openCustomerConsent(tenantId: string, cancelPendingLogin: 
 export function getDemoResult(request: WorkerRequest): unknown {
   switch (request.action) {
     case "preflight":
-      return { isAdministrator: true, powershellVersion: "5.1", graphModuleInstalled: true };
+      return {
+        isAdministrator: true,
+        powershellVersion: "5.1",
+        graphModuleInstalled: true,
+        authMode: "wam",
+        isOobe: false,
+        wamAvailable: true,
+      };
+    case "loginPartner":
+      return {
+        tenantId: "26aaae92-5737-48a2-b00c-27aff5b013e7",
+        account: "it-hulp@capturetech.example",
+        authMode: "wam",
+        isOobe: false,
+      };
     case "loadCustomers":
       return { customers: demoCustomers };
     case "loadProfiles":
       return { profiles: demoProfiles };
+    case "connectCustomer":
+      return {
+        tenantId: request.payload.tenantId,
+        account: "it-hulp@capturetech.example",
+        authMode: "wam",
+      };
+    case "resetSession":
+      return { authMode: "wam", sessionReset: true };
     case "registerDevice": {
       const profile = demoProfiles.find((entry) => entry.profileId === request.payload.profileId);
       const staticGroup = profile?.groupCandidates.find((candidate) => candidate.id === request.payload.staticGroupId);
@@ -164,7 +186,7 @@ export function getDemoResult(request: WorkerRequest): unknown {
 export function getDemoLogs(action: WorkerRequest): Array<Pick<WorkerEvent, "event" | "payload">> {
   const base = { event: "log" as const, payload: { level: "info" as const, technical: false } };
   if (action.action === "loginPartner") {
-    return [{ ...base, payload: { ...base.payload, message: "Browseraanmelding voor IT-Hulp gestart." } }];
+    return [{ ...base, payload: { ...base.payload, message: "Windows opent de accountkiezer voor het IT-Hulp-account." } }];
   }
   if (action.action === "connectCustomer") {
     return [{ ...base, payload: { ...base.payload, message: "Verbonden met de geselecteerde klanttenant." } }];

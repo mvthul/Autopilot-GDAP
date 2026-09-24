@@ -35,7 +35,7 @@ function Write-WorkerResult {
         [Parameter(Mandatory = $true)][string]$RequestId,
         [bool]$Ok,
         [AllowNull()][object]$Data,
-        [string]$Error
+        [AllowNull()][object]$Error
     )
     $message = [ordered]@{
         kind = "result"
@@ -105,6 +105,9 @@ while ($true) {
             "loadProfiles" {
                 $data = Invoke-LoadProfiles -State $state
             }
+            "resetSession" {
+                $data = Invoke-ResetSession -State $state
+            }
             "registerDevice" {
                 $profileId = [string](Get-RequestValue -Payload $payload -Name "profileId")
                 if ([string]::IsNullOrWhiteSpace($profileId)) { throw "Een Autopilot-profiel is verplicht." }
@@ -124,10 +127,9 @@ while ($true) {
         Write-WorkerResult -RequestId $requestId -Ok $true -Data $data
     }
     catch {
-        $detail = $_.Exception.Message
-        if ([string]::IsNullOrWhiteSpace($detail)) { $detail = ($_ | Out-String).Trim() }
         if ([string]::IsNullOrWhiteSpace($requestId)) { $requestId = [guid]::NewGuid().ToString() }
-        Write-WorkerResult -RequestId $requestId -Ok $false -Data $null -Error $detail
+        $errorInfo = Get-AutopilotGdapError -ErrorRecord $_
+        Write-WorkerResult -RequestId $requestId -Ok $false -Data $null -Error $errorInfo
     }
     finally {
         $workerContext.RequestId = ""
