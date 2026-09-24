@@ -14,6 +14,16 @@ Controleer of de GDAP-relatie actief is en of het IT-Hulp-account de juiste
 PIM-activatie heeft: minimaal Intune Administrator en, voor groepen, Groups
 Administrator.
 
+## WAM meldt een ontbrekende GDAP-rolcontext
+
+Bij sommige GDAP-relaties geeft Windows Web Account Manager voor een klanttenant
+een B2B-gasttoken zonder directoryrolcontext (`wids`) terug. De app herkent dit
+vóór het laden van profielen en opent automatisch browser-SSO voor alleen die
+klant, met een login-hint voor hetzelfde IT-Hulp-account. Dit is geen device
+code-flow en de browser-token blijft alleen in het geheugen van de actieve
+appsessie. Na een succesvolle browseraanmelding toont het sessieoverzicht
+**Browser-SSO (GDAP)** als klantcontext.
+
 ## WAM kan niet starten
 
 Op een normale Windows-desktop gebruikt de Tauri-app Windows Web Account Manager
@@ -28,7 +38,7 @@ niet afgemeld.
 Sluit andere toolinstanties en controleer of poort `8765` (Partner Center) of
 `8766` (Graph) niet door een ander proces wordt gebruikt. Tijdens OOBE gebruikt
 de tool de systeembrowser en geen device code; buiten OOBE gebruikt de Tauri-app
-WAM.
+WAM voor de partner-sessie en zo nodig browser-SSO voor een GDAP-klantcontext.
 
 ## Tauri-app start niet in OOBE
 

@@ -4,6 +4,9 @@ export type LogLevel = "info" | "success" | "warning" | "error";
 
 export type AuthMode = "wam" | "browserOobe";
 
+/** Authentication source for the active customer Graph context. */
+export type CustomerAuthMode = "wam" | "browserSsoFallback" | "browserOobe";
+
 export type WorkerErrorCode =
   | "customerConsentRequired"
   | "partnerCenterConsentRequired"
@@ -67,12 +70,17 @@ export interface LoginResult {
   account: string;
   authMode: AuthMode;
   isOobe: boolean;
+  /** Demo and older workers can still return a complete list. */
+  customers?: Customer[];
+  /** Production workers transfer the list through small `customers` events. */
+  customerCount?: number;
 }
 
 export interface CustomerConnectionResult {
   tenantId: string;
   account: string;
   authMode: AuthMode;
+  customerAuthMode?: CustomerAuthMode;
 }
 
 export interface RegisterResult {
@@ -103,12 +111,13 @@ export type WorkerRequest = WorkerAction & {
 export interface WorkerEvent {
   kind: "event" | "result";
   requestId: string;
-  event?: "log" | "status" | "progress";
+  event?: "log" | "status" | "progress" | "customers";
   payload?: {
     message?: string;
     level?: LogLevel;
     technical?: boolean;
     step?: WorkflowStep;
+    customers?: Customer[];
   };
   ok?: boolean;
   data?: unknown;

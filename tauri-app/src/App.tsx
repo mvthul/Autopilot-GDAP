@@ -39,6 +39,7 @@ import type {
   WorkerRequest,
   WorkflowStep,
   AuthMode,
+  CustomerAuthMode,
 } from "./types";
 
 type Pending = { id: string; action: WorkerRequest["action"]; customer?: Customer };
@@ -89,6 +90,7 @@ export function App() {
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
   const [sessionAccount, setSessionAccount] = useState("");
   const [sessionAuthMode, setSessionAuthMode] = useState<AuthMode | null>(null);
+  const [customerAuthMode, setCustomerAuthMode] = useState<CustomerAuthMode | null>(null);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerSearch, setCustomerSearch] = useState("");
   const [selectedCustomerId, setSelectedCustomerId] = useState("");
@@ -144,21 +146,27 @@ export function App() {
           const result = data as LoginResult;
           setSessionAccount(result.account);
           setSessionAuthMode(result.authMode);
-          appendLog(
-            result.authMode === "wam"
-              ? "IT-Hulp-account is via Windows aangemeld. Partner Center-klanten worden stil opgehaald."
-              : "IT-Hulp-account is via de OOBE-browser aangemeld. Partner Center-klanten worden opgehaald.",
-            "success",
-          );
-          setNextAction({ action: "loadCustomers", payload: {} });
-          return;
-        }
-        case "loadCustomers": {
-          const loaded = (data as { customers?: Customer[] }).customers ?? [];
+          const loaded = customersRef.current.length > 0 ? customersRef.current : result.customers ?? [];
+          const customerCount = result.customerCount ?? loaded.length;
           customersRef.current = loaded;
           setCustomers(loaded);
           setStep("customer");
-          appendLog(`${loaded.length} klant${loaded.length === 1 ? "" : "en"} geladen vanuit Partner Center.`, "success");
+          appendLog(
+            result.authMode === "wam"
+              ? `${customerCount} klant${customerCount === 1 ? "" : "en"} zijn via Windows en Partner Center geladen.`
+              : `${customerCount} klant${customerCount === 1 ? "" : "en"} zijn via de OOBE-browser en Partner Center geladen.`,
+            "success",
+          );
+          return;
+        }
+        case "loadCustomers": {
+          const result = data as { customers?: Customer[]; customerCount?: number };
+          const loaded = customersRef.current.length > 0 ? customersRef.current : result.customers ?? [];
+          const customerCount = result.customerCount ?? loaded.length;
+          customersRef.current = loaded;
+          setCustomers(loaded);
+          setStep("customer");
+          appendLog(`${customerCount} klant${customerCount === 1 ? "" : "en"} geladen vanuit Partner Center.`, "success");
           return;
         }
         case "connectCustomer": {
@@ -166,6 +174,7 @@ export function App() {
           setCustomerConsentDialog(null);
           setSessionAccount((current) => result.account || current);
           setSessionAuthMode(result.authMode);
+          setCustomerAuthMode(result.customerAuthMode ?? (result.authMode === "browserOobe" ? "browserOobe" : "wam"));
           appendLog("Klantcontext is geverifieerd. Autopilot-profielen worden geladen.", "success");
           setNextAction({ action: "loadProfiles", payload: {} });
           return;
@@ -199,6 +208,7 @@ export function App() {
           setCustomerConsentDialog(null);
           setSessionAccount("");
           setSessionAuthMode(null);
+          setCustomerAuthMode(null);
           setNextAction(null);
           setLogs([]);
           appendLog("De appsessie is gewist. Kies opnieuw het gewenste IT-Hulp-account.", "info");
@@ -214,6 +224,20 @@ export function App() {
   const handleWorkerEvent = useCallback(
     (event: WorkerEvent) => {
       if (event.kind === "event") {
+        if (event.event === "customers") {
+          const active = pendingRef.current;
+          if (!active || active.id !== event.requestId || (active.action !== "loginPartner" && active.action !== "loadCustomers")) {
+            return;
+          }
+          const incoming = event.payload?.customers ?? [];
+          if (incoming.length === 0) return;
+          const byTenantId = new Map(customersRef.current.map((customer) => [customer.tenantId, customer]));
+          for (const customer of incoming) byTenantId.set(customer.tenantId, customer);
+          const merged = Array.from(byTenantId.values());
+          customersRef.current = merged;
+          setCustomers(merged);
+          return;
+        }
         const message = event.payload?.message;
         if (message) appendLog(message, event.payload?.level ?? "info", Boolean(event.payload?.technical));
         if (event.payload?.step) setStep(event.payload.step);
@@ -262,6 +286,11 @@ export function App() {
       } as Pending;
       pendingRef.current = active;
       setPending(active);
+
+      if (request.action === "loginPartner" || request.action === "loadCustomers") {
+        customersRef.current = [];
+        setCustomers([]);
+      }
 
       try {
         if (isDesktopApp()) {
@@ -391,6 +420,9 @@ export function App() {
   const hasSessionDetails = Boolean(sessionAccount || selectedCustomer || selectedProfile || registration || busy || visibleLogs.length > 0);
   const usingOobeBrowser = (sessionAuthMode ?? preflight?.authMode) === "browserOobe";
   const canStartLogin = !preflight || preflight.authMode === "browserOobe" || preflight.wamAvailable;
+  const customerBusyLabel = pending?.action === "loginPartner" || pending?.action === "loadCustomers"
+    ? "Klantenlijst laden…"
+    : "Klantcontext openen…";
 
   return (
     <main className="app-shell">
@@ -480,7 +512,7 @@ export function App() {
                 <p className="lead">
                   {usingOobeBrowser
                     ? "Windows Setup is actief. De browser gebruikt veilig dezelfde Microsoft SSO-sessie voor Graph en Partner Center."
-                    : "Windows toont één accountkiezer. Daarna gebruikt de app hetzelfde IT-Hulp-account stil voor Microsoft Graph en Partner Center."}
+                    : "Windows toont één accountkiezer voor de partner-sessie. Partner Center gebruikt die sessie stil; alleen wanneer een klant een GDAP-browsercontext vereist, opent browser-SSO automatisch voor die klant."}
                 </p>
                 <div className="feature-row">
                   <div className="feature-icon"><LockKeyhole size={22} /></div>
@@ -491,7 +523,7 @@ export function App() {
                 </div>
                 <div className="feature-row">
                   <div className="feature-icon"><UserRoundCheck size={22} /></div>
-                  <div><strong>GDAP en PIM blijven leidend</strong><span>De tool gebruikt alleen jouw actieve delegated rechten en vraagt niet opnieuw om een account tijdens registratie.</span></div>
+                  <div><strong>GDAP en PIM blijven leidend</strong><span>De tool gebruikt alleen jouw actieve delegated rechten. Een eventuele browser-SSO voor een klant wordt daarna ook tijdens registratie hergebruikt.</span></div>
                 </div>
                 <button className="button primary" type="button" disabled={busy || !canStartLogin} onClick={() => void dispatch({ action: "loginPartner", payload: {} })}>
                   {busy ? <LoaderCircle className="spin" size={18} /> : <ArrowRight size={18} />}
@@ -518,7 +550,10 @@ export function App() {
                       role="option"
                       aria-selected={selectedCustomerId === customer.tenantId}
                       className={`customer-option ${selectedCustomerId === customer.tenantId ? "selected" : ""}`}
-                      onClick={() => setSelectedCustomerId(customer.tenantId)}
+                      onClick={() => {
+                        setSelectedCustomerId(customer.tenantId);
+                        setCustomerAuthMode(null);
+                      }}
                       key={customer.tenantId}
                     >
                       <span className="customer-name">{customer.customerName}</span>
@@ -530,7 +565,7 @@ export function App() {
                 </div>
                 <button className="button primary" type="button" disabled={!selectedCustomer || busy} onClick={connectCustomer}>
                   {busy ? <LoaderCircle className="spin" size={18} /> : <ArrowRight size={18} />}
-                  {busy ? "Klantcontext openen…" : "Verbind met klanttenant"}
+                  {busy ? customerBusyLabel : "Verbind met klanttenant"}
                 </button>
                 <button
                   className="customer-setup-link"
@@ -652,6 +687,7 @@ export function App() {
                 <div><dt>IT-Hulp-account</dt><dd>{sessionAccount || "Nog niet aangemeld"}</dd></div>
                 <div><dt>Aanmelding</dt><dd>{sessionAuthMode === "wam" ? "Windows WAM" : sessionAuthMode === "browserOobe" ? "OOBE-browser" : "Nog niet gestart"}</dd></div>
                 <div><dt>Klant</dt><dd>{selectedCustomer?.customerName ?? "Nog niet gekozen"}</dd></div>
+                <div><dt>Klantcontext</dt><dd>{customerAuthMode === "browserSsoFallback" ? "Browser-SSO (GDAP)" : customerAuthMode === "browserOobe" ? "OOBE-browser" : customerAuthMode === "wam" ? "Windows WAM" : "Nog niet geopend"}</dd></div>
                 <div><dt>Profiel</dt><dd>{selectedProfile?.displayName ?? "Nog niet gekozen"}</dd></div>
                 <div><dt>Groep</dt><dd>{selectedCandidate?.name ?? (selectedProfile?.groupCandidates.length === 0 ? "Automatisch" : "Nog niet gekozen")}</dd></div>
                 <div><dt>Hostname</dt><dd>{hostname || "Automatisch"}</dd></div>

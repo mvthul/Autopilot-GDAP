@@ -154,9 +154,11 @@ export function getDemoResult(request: WorkerRequest): unknown {
         account: "it-hulp@capturetech.example",
         authMode: "wam",
         isOobe: false,
+        customers: demoCustomers,
+        customerCount: demoCustomers.length,
       };
     case "loadCustomers":
-      return { customers: demoCustomers };
+      return { customers: demoCustomers, customerCount: demoCustomers.length };
     case "loadProfiles":
       return { profiles: demoProfiles };
     case "connectCustomer":
@@ -164,6 +166,7 @@ export function getDemoResult(request: WorkerRequest): unknown {
         tenantId: request.payload.tenantId,
         account: "it-hulp@capturetech.example",
         authMode: "wam",
+        customerAuthMode: "wam",
       };
     case "resetSession":
       return { authMode: "wam", sessionReset: true };

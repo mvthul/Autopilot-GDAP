@@ -53,6 +53,10 @@ function New-AutopilotGdapState {
 
     $localDataPath = Get-AutopilotGdapDataPath
     $tokenFolder = Join-Path $localDataPath "CaptureTech\AutopilotGDAP"
+    $customerCachePath = [string]$env:CAPTURETECH_CUSTOMER_CACHE_PATH
+    if ([string]::IsNullOrWhiteSpace($customerCachePath)) {
+        $customerCachePath = Join-Path $tokenFolder "partner-center-customers.ndjson"
+    }
     $isOobe = Test-OobeEnvironment
     [pscustomobject]@{
         Emitter = $Emitter
@@ -63,15 +67,21 @@ function New-AutopilotGdapState {
         WamAvailable = Test-WamInteractiveSession -IsOobe $isOobe
         PartnerCenterTokenPath = Join-Path $tokenFolder "partnercenter.v1.token"
         PartnerCenterAccessToken = $null
+        GraphAccessToken = $null
         BrowserCancellationPath = Join-Path $tokenFolder "browser-auth.cancel"
         BrowserInteractiveCompleted = $false
         WamBridgeReady = $false
         SessionAccount = ""
         SessionHomeAccountId = ""
         LegacyPartnerCenterTokenRetired = $false
+        CustomerCachePath = $customerCachePath
         Customers = @()
         Profiles = @()
         TargetTenantId = ""
+        # The partner session can use WAM while a specific GDAP customer
+        # needs the browser's role-bearing SSO token. Keep that distinction
+        # in worker memory only, so the UI can accurately describe it.
+        CustomerAuthMode = ""
         ConnectedAccount = ""
         RegistrationCompleted = $false
     }
@@ -94,6 +104,7 @@ function Get-AutopilotGdapError {
     param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
 
     $exception = $ErrorRecord.Exception
+    $exceptionDetails = [System.Collections.Generic.List[string]]::new()
     while ($exception) {
         if ($exception.Data -and $exception.Data.Contains("capturetechErrorCode")) {
             return [pscustomobject]@{
@@ -102,10 +113,13 @@ function Get-AutopilotGdapError {
                 details = [string]$exception.Data["capturetechErrorDetails"]
             }
         }
+        $typeName = [string]$exception.GetType().FullName
+        if (-not [string]::IsNullOrWhiteSpace($typeName)) { [void]$exceptionDetails.Add($typeName) }
+        if (-not [string]::IsNullOrWhiteSpace([string]$exception.Message)) { [void]$exceptionDetails.Add([string]$exception.Message) }
         $exception = $exception.InnerException
     }
 
-    $details = [string]$ErrorRecord.Exception.Message
+    $details = (@($exceptionDetails | Select-Object -Unique) -join " | ")
     if ([string]::IsNullOrWhiteSpace($details)) { $details = ($ErrorRecord | Out-String).Trim() }
     $code = "operationFailed"
     $message = $details
@@ -117,6 +131,10 @@ function Get-AutopilotGdapError {
         $code = "customerConsentRequired"
         $message = "De CaptureTech-app is nog niet geautoriseerd in deze klanttenant. Laat een Global Administrator eerst klant-appconsent verlenen."
     }
+    elseif ($details -match '401|Unauthorized|InvalidAuthenticationToken') {
+        $code = "gdapPimDenied"
+        $message = "Microsoft Graph accepteert het GDAP/PIM-token voor deze klant niet. Controleer je actieve GDAP/PIM-rollen en probeer de klantverbinding opnieuw."
+    }
     elseif ($details -match '403|Forbidden|Authorization_RequestDenied') {
         $code = "gdapPimDenied"
         $message = "Toegang geweigerd. Controleer of je actieve GDAP/PIM-rollen voor deze klant voldoende zijn."
@@ -125,15 +143,219 @@ function Get-AutopilotGdapError {
         $code = "authCancelled"
         $message = "De aanmelding is geannuleerd."
     }
+    elseif ($details -match '(netstandard.*(not referenced|assembly)|(not referenced|assembly).*netstandard)|System\.Windows\.Forms.*not referenced') {
+        $code = "wamUnavailable"
+        $message = "De .NET-onderdelen voor Windows Web Account Manager kunnen niet worden geladen. Herstel .NET Framework 4.8 en start de app opnieuw."
+    }
     elseif ($details -match 'WAM|Web Account Manager|BrokerPlugin|Parent.*window|interactive Windows user') {
         $code = "wamUnavailable"
-        $message = "Windows Web Account Manager kan niet worden gestart. Start de app in een normale interactieve Windows-sessie of gebruik de OOBE-browserflow."
+        $message = "Windows Web Account Manager kan niet worden gestart. Controleer de technische uitvoer voor de exacte Windows- of brokerfout."
     }
     elseif ($details -match 'MsalUiRequiredException|interaction_required|login_required|claims challenge|conditional access|AADSTS50076|AADSTS50079|AADSTS50158') {
         $code = "authenticationRequired"
         $message = "Extra verificatie is nodig voor het geselecteerde account."
     }
     [pscustomobject]@{ code = $code; message = $message; details = $details }
+}
+
+function Test-GraphAuthorizationFailure {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    # Invoke-MgGraphRequest wraps HTTP response details differently between
+    # Graph SDK releases. Inspect the complete exception chain plus PowerShell
+    # rendering so a rejected silent customer-tenant token reliably gets one
+    # WAM refresh attempt.
+    $details = [System.Collections.Generic.List[string]]::new()
+    $exception = $ErrorRecord.Exception
+    while ($exception) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$exception.Message)) {
+            [void]$details.Add([string]$exception.Message)
+        }
+        $exception = $exception.InnerException
+    }
+    try {
+        $rendered = ($ErrorRecord | Out-String).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($rendered)) { [void]$details.Add($rendered) }
+    }
+    catch { }
+    return [bool](($details -join " | ") -match '(?i)(\b401\b|\b403\b|Unauthorized|Forbidden|InvalidAuthenticationToken|Authorization_RequestDenied)')
+}
+
+function Get-GraphResponseDiagnostic {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    $response = $null
+    $exception = $ErrorRecord.Exception
+    while ($exception -and $null -eq $response) {
+        $responseProperty = $exception.PSObject.Properties["Response"]
+        if ($responseProperty -and $null -ne $responseProperty.Value) { $response = $responseProperty.Value }
+        $exception = $exception.InnerException
+    }
+
+    $statusCode = ""
+    $reasonPhrase = ""
+    $serviceCode = ""
+    $serviceMessage = ""
+    if ($response) {
+        try { $statusCode = [string][int]$response.StatusCode } catch { }
+        try { $reasonPhrase = [string]$response.ReasonPhrase } catch { }
+        try {
+            $body = ""
+            $contentProperty = $response.PSObject.Properties["Content"]
+            if ($contentProperty -and $null -ne $contentProperty.Value) {
+                $body = [string]$contentProperty.Value.ReadAsStringAsync().GetAwaiter().GetResult()
+            }
+            elseif ($response.PSObject.Methods["GetResponseStream"]) {
+                $stream = $response.GetResponseStream()
+                if ($stream) {
+                    $reader = [System.IO.StreamReader]::new($stream)
+                    try { $body = $reader.ReadToEnd() }
+                    finally { $reader.Dispose() }
+                }
+            }
+            if (-not [string]::IsNullOrWhiteSpace($body)) {
+                try {
+                    $parsed = $body | ConvertFrom-Json -ErrorAction Stop
+                    $serviceCode = [string]$parsed.error.code
+                    $serviceMessage = [string]$parsed.error.message
+                }
+                catch {
+                    $serviceMessage = $body
+                }
+            }
+        }
+        catch { }
+    }
+    if ([string]::IsNullOrWhiteSpace($serviceMessage)) { $serviceMessage = [string]$ErrorRecord.Exception.Message }
+    if ($serviceMessage.Length -gt 500) { $serviceMessage = $serviceMessage.Substring(0, 500) }
+    [pscustomobject]@{
+        statusCode = $statusCode
+        reasonPhrase = $reasonPhrase
+        serviceCode = $serviceCode
+        serviceMessage = $serviceMessage
+    }
+}
+
+function Get-GraphTokenDiagnostic {
+    param([Parameter(Mandatory = $true)][string]$AccessToken)
+
+    # Only parse non-secret metadata from the JWT payload. The access token,
+    # user ID and username are deliberately never written to the event log.
+    try {
+        $segments = $AccessToken.Split('.')
+        if ($segments.Count -lt 2) { throw "Geen JWT-payload gevonden." }
+        $payload = $segments[1].Replace('-', '+').Replace('_', '/')
+        switch ($payload.Length % 4) {
+            2 { $payload += "==" }
+            3 { $payload += "=" }
+            1 { throw "Ongeldige JWT-payloadlengte." }
+        }
+        $claims = ([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload)) | ConvertFrom-Json -ErrorAction Stop)
+        $scope = [string]$claims.scp
+        if ($scope.Length -gt 500) { $scope = $scope.Substring(0, 500) }
+        $claimNames = @($claims.PSObject.Properties.Name | Sort-Object) -join ','
+        if ($claimNames.Length -gt 500) { $claimNames = $claimNames.Substring(0, 500) }
+        $cnfProperty = $claims.PSObject.Properties['cnf']
+        $cnfKeys = ''
+        if ($cnfProperty -and $null -ne $cnfProperty.Value) {
+            try { $cnfKeys = @($cnfProperty.Value.PSObject.Properties.Name | Sort-Object) -join ',' } catch { $cnfKeys = 'aanwezig' }
+        }
+        $clientCapabilities = ''
+        $xmsCcProperty = $claims.PSObject.Properties['xms_cc']
+        if ($xmsCcProperty -and $null -ne $xmsCcProperty.Value) {
+            try { $clientCapabilities = ($xmsCcProperty.Value | ConvertTo-Json -Compress -Depth 4) } catch { $clientCapabilities = 'aanwezig' }
+        }
+        if ($clientCapabilities.Length -gt 200) { $clientCapabilities = $clientCapabilities.Substring(0, 200) }
+        $authMethods = ''
+        $amrProperty = $claims.PSObject.Properties['amr']
+        if ($amrProperty -and $null -ne $amrProperty.Value) { $authMethods = @($amrProperty.Value) -join ',' }
+        $widsProperty = $claims.PSObject.Properties['wids']
+        $rolesProperty = $claims.PSObject.Properties['roles']
+        $directoryRoleClaimCount = if ($widsProperty -and $null -ne $widsProperty.Value) { @($widsProperty.Value).Count } else { 0 }
+        $appRoleClaimCount = if ($rolesProperty -and $null -ne $rolesProperty.Value) { @($rolesProperty.Value).Count } else { 0 }
+        return [pscustomobject]@{
+            available = $true
+            tenantId = [string]$claims.tid
+            audience = [string]$claims.aud
+            issuer = [string]$claims.iss
+            tokenVersion = [string]$claims.ver
+            applicationId = if (-not [string]::IsNullOrWhiteSpace([string]$claims.appid)) { [string]$claims.appid } else { [string]$claims.azp }
+            scopes = $scope
+            identityType = [string]$claims.idtyp
+            claimNames = $claimNames
+            proofOfPossession = [bool]($cnfProperty -and $null -ne $cnfProperty.Value)
+            proofOfPossessionKeys = $cnfKeys
+            clientCapabilities = $clientCapabilities
+            authMethods = $authMethods
+            directoryRoleClaimCount = $directoryRoleClaimCount
+            appRoleClaimCount = $appRoleClaimCount
+        }
+    }
+    catch {
+        return [pscustomobject]@{
+            available = $false
+            tenantId = ""
+            audience = ""
+            issuer = ""
+            tokenVersion = ""
+            applicationId = ""
+            scopes = ""
+            identityType = ""
+            claimNames = ""
+            proofOfPossession = $false
+            proofOfPossessionKeys = ""
+            clientCapabilities = ""
+            authMethods = ""
+            directoryRoleClaimCount = 0
+            appRoleClaimCount = 0
+        }
+    }
+}
+
+function Write-GraphTokenDiagnostic {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][object]$Token,
+        [Parameter(Mandatory = $true)][object]$Context,
+        [Parameter(Mandatory = $true)][string]$RequestedTenantId
+    )
+
+    $diagnostic = Get-GraphTokenDiagnostic -AccessToken ([string]$Token.accessToken)
+    $contextScopes = (@($Context.Scopes) -join ",")
+    if ($contextScopes.Length -gt 500) { $contextScopes = $contextScopes.Substring(0, 500) }
+    $message = "Graph-tokencontrole (geen tokeninhoud): aangevraagdTid=$RequestedTenantId; tokenTid=$($diagnostic.tenantId); contextTid=$($Context.TenantId); iss=$($diagnostic.issuer); ver=$($diagnostic.tokenVersion); aud=$($diagnostic.audience); appId=$($diagnostic.applicationId); scp=$($diagnostic.scopes); idtyp=$($diagnostic.identityType); pop=$($diagnostic.proofOfPossession); popKeys=$($diagnostic.proofOfPossessionKeys); xmsCc=$($diagnostic.clientCapabilities); amr=$($diagnostic.authMethods); claimNames=$($diagnostic.claimNames); wids=$($diagnostic.directoryRoleClaimCount); roles=$($diagnostic.appRoleClaimCount); contextScopes=$contextScopes"
+    Write-EngineEvent -State $State -Message $message -Level info -Technical $true
+}
+
+function Test-GraphTokenHasDirectoryRoleContext {
+    param([Parameter(Mandatory = $true)][string]$AccessToken)
+
+    if ([string]::IsNullOrWhiteSpace($AccessToken)) { return $false }
+    $diagnostic = Get-GraphTokenDiagnostic -AccessToken $AccessToken
+    # A GDAP customer token that works with Intune contains the customer-side
+    # directory-role context in `wids`. WAM can instead issue a structurally
+    # valid B2B guest token without that context; that token is rejected by
+    # both Graph's directory endpoints and Intune.
+    return [bool]($diagnostic.available -and [int]$diagnostic.directoryRoleClaimCount -gt 0)
+}
+
+function Test-CurrentGraphGroupAccess {
+    param([Parameter(Mandatory = $true)][object]$State)
+
+    try {
+        if ([string]::IsNullOrWhiteSpace([string]$State.GraphAccessToken)) {
+            throw "De directe Graph-tokencontrole mist een actieve klanttenanttoken."
+        }
+        $headers = @{ Authorization = "Bearer $($State.GraphAccessToken)"; Accept = "application/json" }
+        [void](Invoke-WebRequest -Method GET -Uri "https://graph.microsoft.com/v1.0/groups?%24top=1&%24select=id" -Headers $headers -UseBasicParsing -ErrorAction Stop)
+        Write-EngineEvent -State $State -Message "Graph-toegangscontrole met directe Bearer-token: de klanttenanttoken werkt voor de standaard groeps-API." -Level info -Technical $true
+        return [pscustomobject]@{ succeeded = $true; diagnostic = $null }
+    }
+    catch {
+        $diagnostic = Get-GraphResponseDiagnostic -ErrorRecord $_
+        Write-EngineEvent -State $State -Message "Graph-toegangscontrole met directe Bearer-token: HTTP $($diagnostic.statusCode) $($diagnostic.reasonPhrase); code=$($diagnostic.serviceCode); bericht=$($diagnostic.serviceMessage)" -Level warning -Technical $true
+        return [pscustomobject]@{ succeeded = $false; diagnostic = $diagnostic }
+    }
 }
 
 function Write-EngineEvent {
@@ -259,9 +481,14 @@ function Get-BrowserGraphAccessToken {
     $scope = (($Scopes + @("openid", "profile", "offline_access")) | Select-Object -Unique) -join " "
     $authority = "https://login.microsoftonline.com/$TenantId/oauth2/v2.0"
     $redirectUri = "http://localhost:8766/"
+    # For a desktop WAM session this preserves the selected IT-Hulp account
+    # when a customer needs browser SSO for its GDAP role context. It is only
+    # a hint: Conditional Access and account selection still stay in Entra.
+    $loginHint = [string]$State.SessionAccount
+    $loginHintParameter = if ([string]::IsNullOrWhiteSpace($loginHint)) { "" } else { "&login_hint=$([uri]::EscapeDataString($loginHint))" }
     $prompts = if ($State.BrowserInteractiveCompleted) { @("none", "select_account") } else { @("select_account") }
     foreach ($prompt in $prompts) {
-        $authorizeUri = "$authority/authorize?client_id=$([uri]::EscapeDataString($State.PublicClientId))&response_type=code&redirect_uri=$([uri]::EscapeDataString($redirectUri))&response_mode=query&scope=$([uri]::EscapeDataString($scope))&prompt=$prompt"
+        $authorizeUri = "$authority/authorize?client_id=$([uri]::EscapeDataString($State.PublicClientId))&response_type=code&redirect_uri=$([uri]::EscapeDataString($redirectUri))&response_mode=query&scope=$([uri]::EscapeDataString($scope))&prompt=$prompt$loginHintParameter"
         $exchange = {
             param([string]$Code)
             try {
@@ -311,19 +538,57 @@ function Get-WamBridgeReferenceAssemblies {
     )
 
     # Microsoft.Identity.Client.Broker exposes a Windows Forms overload for
-    # WithParentActivityOrWindow.  Add-Type does not add that framework
-    # assembly automatically when compiling the in-memory bridge in Windows
-    # PowerShell 5.1, so explicitly include it here.
+    # WithParentActivityOrWindow. Add-Type in Windows PowerShell 5.1 does not
+    # automatically reference either Windows Forms or the .NET Framework
+    # netstandard facade used by the MSAL assemblies. Include both explicitly.
     try {
         Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
         $formsAssemblyPath = [string][System.Windows.Forms.IWin32Window].Assembly.Location
         if ([string]::IsNullOrWhiteSpace($formsAssemblyPath) -or -not (Test-Path -LiteralPath $formsAssemblyPath)) {
             throw "System.Windows.Forms kon niet als WAM-bridgeverwijzing worden gevonden."
         }
-        return @($MsalPath, $BrokerPath, $formsAssemblyPath)
+
+        $netstandardCandidates = [System.Collections.Generic.List[string]]::new()
+        try {
+            $loadedNetstandard = @([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object {
+                try { $_.GetName().Name -eq "netstandard" -and -not [string]::IsNullOrWhiteSpace([string]$_.Location) }
+                catch { $false }
+            } | Select-Object -First 1)
+            if ($loadedNetstandard.Count -gt 0) { [void]$netstandardCandidates.Add([string]$loadedNetstandard[0].Location) }
+        }
+        catch { }
+        try {
+            $runtimeDirectory = [System.Runtime.InteropServices.RuntimeEnvironment]::GetRuntimeDirectory()
+            if (-not [string]::IsNullOrWhiteSpace($runtimeDirectory)) {
+                [void]$netstandardCandidates.Add((Join-Path $runtimeDirectory "Facades\\netstandard.dll"))
+            }
+        }
+        catch { }
+        foreach ($frameworkPath in @(
+            (Join-Path $env:WINDIR "Microsoft.NET\\Framework64\\v4.0.30319\\Facades\\netstandard.dll"),
+            (Join-Path $env:WINDIR "Microsoft.NET\\Framework\\v4.0.30319\\Facades\\netstandard.dll")
+        )) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$frameworkPath)) { [void]$netstandardCandidates.Add($frameworkPath) }
+        }
+        try {
+            $referenceAssembliesRoot = Join-Path ([Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFilesX86)) "Reference Assemblies\\Microsoft\\Framework\\.NETFramework"
+            if (Test-Path -LiteralPath $referenceAssembliesRoot) {
+                foreach ($candidate in @(Get-ChildItem -LiteralPath $referenceAssembliesRoot -Filter "netstandard.dll" -File -Recurse -ErrorAction SilentlyContinue)) {
+                    [void]$netstandardCandidates.Add([string]$candidate.FullName)
+                }
+            }
+        }
+        catch { }
+
+        $netstandardAssemblyPath = @($netstandardCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1)
+        if ($netstandardAssemblyPath.Count -eq 0) {
+            throw "netstandard.dll kon niet als .NET Framework-facade voor de WAM-bridge worden gevonden."
+        }
+        $references = @($MsalPath, $BrokerPath, $formsAssemblyPath, [string]$netstandardAssemblyPath[0])
+        return @($references | Select-Object -Unique)
     }
     catch {
-        Throw-AutopilotGdapError -Code "wamUnavailable" -Message "Windows Forms ontbreekt, waardoor Windows Web Account Manager niet kan worden gestart." -Details $_.Exception.Message
+        Throw-AutopilotGdapError -Code "wamUnavailable" -Message "De vereiste .NET-onderdelen voor Windows Web Account Manager ontbreken. Herstel .NET Framework 4.8 en start de app opnieuw." -Details $_.Exception.Message
     }
 }
 
@@ -351,6 +616,8 @@ function Initialize-WamBroker {
     if (-not ("CaptureTech.AutopilotGdap.WamBroker" -as [type])) {
         $bridgeSource = @'
 using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using Microsoft.Identity.Client;
 using Microsoft.Identity.Client.Broker;
 
@@ -368,49 +635,103 @@ namespace CaptureTech.AutopilotGdap
     {
         private static readonly object Gate = new object();
         private static IPublicClientApplication application;
+        private static readonly Dictionary<string, IPublicClientApplication> customerApplications = new Dictionary<string, IPublicClientApplication>(StringComparer.OrdinalIgnoreCase);
         private static IAccount sessionAccount;
+        private static string configuredClientId;
+        private static long configuredParentWindowHandle;
+        private const uint GA_ROOT = 2;
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
+
+        private static IntPtr GetTopLevelWindow(long parentWindowHandle)
+        {
+            var suppliedWindow = new IntPtr(parentWindowHandle);
+            var topLevelWindow = GetAncestor(suppliedWindow, GA_ROOT);
+            return topLevelWindow == IntPtr.Zero ? suppliedWindow : topLevelWindow;
+        }
+
+        private static IPublicClientApplication CreateApplication(string authorityTenant)
+        {
+            var brokerOptions = new BrokerOptions(BrokerOptions.OperatingSystems.Windows);
+            brokerOptions.Title = "CaptureTech Autopilot GDAP";
+            var builder = PublicClientApplicationBuilder.Create(configuredClientId)
+                .WithAuthority(AzureCloudInstance.AzurePublic, authorityTenant)
+                // The ms-appx-web BrokerPlugin redirect must be registered
+                // in Entra, but must not be forced here. MSAL chooses the
+                // correct WAM redirect through WithDefaultRedirectUri().
+                .WithDefaultRedirectUri()
+                // Tauri exposes a webview HWND. WAM must be parented to
+                // the top-level app window so its native chooser returns
+                // to this app rather than appearing behind it.
+                .WithParentActivityOrWindow(() => GetTopLevelWindow(configuredParentWindowHandle));
+            return BrokerExtension.WithBroker(builder, brokerOptions).Build();
+        }
+
+        private static IPublicClientApplication GetCustomerApplication(string tenantId)
+        {
+            if (String.IsNullOrWhiteSpace(tenantId)) throw new ArgumentException("De klanttenant ontbreekt.", "tenantId");
+            lock (Gate)
+            {
+                IPublicClientApplication customerApplication;
+                if (!customerApplications.TryGetValue(tenantId, out customerApplication))
+                {
+                    // GDAP calls are evaluated in the customer tenant. Keep
+                    // a tenant-specific broker application so WAM uses the
+                    // same authority as the proven browser tenant flow.
+                    customerApplication = CreateApplication(tenantId);
+                    customerApplications[tenantId] = customerApplication;
+                }
+                return customerApplication;
+            }
+        }
 
         public static void Initialize(string clientId, long parentWindowHandle)
         {
             lock (Gate)
             {
                 if (application != null) return;
-                var brokerOptions = new BrokerOptions(BrokerOptions.OperatingSystems.Windows);
-                brokerOptions.Title = "CaptureTech Autopilot GDAP";
-                var builder = PublicClientApplicationBuilder.Create(clientId)
-                    .WithAuthority(AzureCloudInstance.AzurePublic, "organizations")
-                    // The ms-appx-web BrokerPlugin redirect must be registered
-                    // in Entra, but must not be forced here. MSAL chooses the
-                    // correct WAM redirect through WithDefaultRedirectUri().
-                    .WithDefaultRedirectUri()
-                    .WithParentActivityOrWindow(() => new IntPtr(parentWindowHandle));
-                application = BrokerExtension.WithBroker(
-                    builder,
-                    brokerOptions).Build();
+                configuredClientId = clientId;
+                configuredParentWindowHandle = parentWindowHandle;
+                // Partner Graph and Partner Center start with organizations
+                // so Windows presents exactly one initial account picker.
+                application = CreateApplication("organizations");
             }
         }
 
-        public static WamToken Acquire(string tenantId, string[] scopes, bool interactive, bool selectAccount)
+        public static WamToken Acquire(string tenantId, string[] scopes, bool interactive, bool selectAccount, bool forceCustomerAccountSelection, bool useTenantSpecificAuthority)
         {
             if (application == null) throw new InvalidOperationException("WAM is niet geïnitialiseerd.");
-            // A tenant-specific WAM authority suppresses the native Windows
-            // account picker. Use organizations for the one interactive
-            // account selection, then acquire all follow-up tenant tokens
-            // silently for that selected account.
-            var authorityTenant = selectAccount ? "organizations" : tenantId;
-            var authority = "https://login.microsoftonline.com/" + authorityTenant;
+            var requestApplication = useTenantSpecificAuthority ? GetCustomerApplication(tenantId) : application;
+            // Partner Center continues using the base organizations authority.
+            // Customer Graph calls deliberately use the explicit customer
+            // tenant authority, matching the established browser GDAP flow.
             AuthenticationResult result;
             if (interactive)
             {
-                var request = application.AcquireTokenInteractive(scopes).WithAuthority(authority);
-                if (sessionAccount != null && !selectAccount) request = request.WithAccount(sessionAccount);
-                if (selectAccount) request = request.WithPrompt(Prompt.SelectAccount);
+                var request = requestApplication.AcquireTokenInteractive(scopes);
+                if (!selectAccount || forceCustomerAccountSelection) request = request.WithTenantId(tenantId);
+                if (forceCustomerAccountSelection)
+                {
+                    // A customer tenant can contain both a B2B guest object
+                    // and a GDAP-derived role context for the same UPN. Do
+                    // not silently reuse the cached guest session: force WAM
+                    // to authenticate the selected IT-Hulp account again in
+                    // the customer authority.
+                    if (sessionAccount != null && !String.IsNullOrWhiteSpace(sessionAccount.Username)) request = request.WithLoginHint(sessionAccount.Username);
+                    request = request.WithPrompt(Prompt.ForceLogin);
+                }
+                else
+                {
+                    if (sessionAccount != null && !selectAccount) request = request.WithAccount(sessionAccount);
+                    if (selectAccount) request = request.WithPrompt(Prompt.SelectAccount);
+                }
                 result = request.ExecuteAsync().GetAwaiter().GetResult();
             }
             else
             {
                 if (sessionAccount == null) throw new MsalUiRequiredException("no_session_account", "Er is geen IT-Hulp-account geselecteerd in deze appsessie.");
-                result = application.AcquireTokenSilent(scopes, sessionAccount).WithAuthority(authority).ExecuteAsync().GetAwaiter().GetResult();
+                result = requestApplication.AcquireTokenSilent(scopes, sessionAccount).WithTenantId(tenantId).ExecuteAsync().GetAwaiter().GetResult();
             }
             sessionAccount = result.Account;
             return new WamToken
@@ -429,8 +750,13 @@ namespace CaptureTech.AutopilotGdap
     }
 }
 '@
-        $bridgeReferences = @(Get-WamBridgeReferenceAssemblies -MsalPath $msalPath -BrokerPath $brokerPath)
-        Add-Type -TypeDefinition $bridgeSource -ReferencedAssemblies $bridgeReferences -Language CSharp -ErrorAction Stop
+        try {
+            $bridgeReferences = @(Get-WamBridgeReferenceAssemblies -MsalPath $msalPath -BrokerPath $brokerPath)
+            Add-Type -TypeDefinition $bridgeSource -ReferencedAssemblies $bridgeReferences -Language CSharp -ErrorAction Stop
+        }
+        catch {
+            Throw-AutopilotGdapError -Code "wamUnavailable" -Message "Windows Web Account Manager kon niet worden geladen. Controleer .NET Framework 4.8 en start de app opnieuw." -Details ($_ | Out-String).Trim()
+        }
     }
     try {
         [CaptureTech.AutopilotGdap.WamBroker]::Initialize($State.PublicClientId, [int64]$env:CAPTURETECH_PARENT_HWND)
@@ -443,8 +769,16 @@ namespace CaptureTech.AutopilotGdap
 
 function ConvertTo-MsalScopes {
     param([Parameter(Mandatory = $true)][string[]]$Scopes)
+
+    # MSAL expects Microsoft Graph delegated permissions in their canonical
+    # short form (for example Directory.Read.All). Prefixing them with the
+    # Graph URL yields a URL-audience token on some WAM paths. That token is
+    # structurally valid but Intune's GDAP service rejects it as unsupported.
+    # Non-Graph resources, notably Partner Center, must retain their full URI.
     return @($Scopes | ForEach-Object {
-        if ($_ -match '^https://') { [string]$_ } else { "https://graph.microsoft.com/$($_)" }
+        $scope = [string]$_
+        if ($scope -match '^https://graph\.microsoft\.com/(.+)$') { return [string]$Matches[1] }
+        return $scope
     })
 }
 
@@ -455,21 +789,31 @@ function Get-WamAccessToken {
         [Parameter(Mandatory = $true)][string[]]$Scopes,
         [switch]$Interactive,
         [switch]$SelectAccount,
+        [switch]$ForceCustomerAccountSelection,
         [switch]$AllowInteractiveFallback
     )
     Initialize-WamBroker -State $State
     $msalScopes = [string[]](ConvertTo-MsalScopes -Scopes $Scopes)
+    $previousHomeAccountId = [string]$State.SessionHomeAccountId
+    # The partner token starts at the organizations authority. Every customer
+    # Graph token is acquired through an explicitly customer-tenant-bound WAM
+    # application so its issuer and broker authorization context match the
+    # browser GDAP flow.
+    $useTenantSpecificAuthority = -not [string]::Equals([string]$TenantId, [string]$State.PartnerTenantId, [System.StringComparison]::OrdinalIgnoreCase)
     try {
-        $token = [CaptureTech.AutopilotGdap.WamBroker]::Acquire($TenantId, $msalScopes, [bool]$Interactive, [bool]$SelectAccount)
+        $token = [CaptureTech.AutopilotGdap.WamBroker]::Acquire($TenantId, $msalScopes, [bool]$Interactive, [bool]$SelectAccount, [bool]$ForceCustomerAccountSelection, [bool]$useTenantSpecificAuthority)
     }
     catch {
         $errorInfo = Get-AutopilotGdapError -ErrorRecord $_
         if ($errorInfo.code -ne "authenticationRequired" -or -not $AllowInteractiveFallback -or $Interactive) { throw }
         Write-EngineEvent -State $State -Message "Windows vraagt aanvullende verificatie voor het eerder gekozen IT-Hulp-account." -Level info -Step login
         try {
-            $token = [CaptureTech.AutopilotGdap.WamBroker]::Acquire($TenantId, $msalScopes, $true, $false)
+            $token = [CaptureTech.AutopilotGdap.WamBroker]::Acquire($TenantId, $msalScopes, $true, $false, $false, [bool]$useTenantSpecificAuthority)
         }
         catch { throw }
+    }
+    if ($ForceCustomerAccountSelection -and -not [string]::IsNullOrWhiteSpace($previousHomeAccountId) -and $previousHomeAccountId -ne [string]$token.HomeAccountId) {
+        Throw-AutopilotGdapError -Code "authenticationRequired" -Message "Kies voor de klanttenant dezelfde IT-Hulp-account als waarmee de Partner Center-sessie is gestart."
     }
     $State.SessionAccount = [string]$token.Account
     $State.SessionHomeAccountId = [string]$token.HomeAccountId
@@ -482,10 +826,15 @@ function Get-GraphAccessToken {
         [Parameter(Mandatory = $true)][string]$TenantId,
         [Parameter(Mandatory = $true)][string[]]$Scopes,
         [switch]$Interactive,
-        [switch]$SelectAccount
+        [switch]$SelectAccount,
+        [switch]$ForceCustomerAccountSelection,
+        [switch]$BrowserSso
     )
+    if ($BrowserSso) {
+        return Get-BrowserGraphAccessToken -State $State -TenantId $TenantId -Scopes $Scopes
+    }
     if ($State.AuthMode -eq "wam") {
-        return Get-WamAccessToken -State $State -TenantId $TenantId -Scopes $Scopes -Interactive:$Interactive -SelectAccount:$SelectAccount -AllowInteractiveFallback:(-not $Interactive)
+        return Get-WamAccessToken -State $State -TenantId $TenantId -Scopes $Scopes -Interactive:$Interactive -SelectAccount:$SelectAccount -ForceCustomerAccountSelection:$ForceCustomerAccountSelection -AllowInteractiveFallback:(-not $Interactive)
     }
     return Get-BrowserGraphAccessToken -State $State -TenantId $TenantId -Scopes $Scopes
 }
@@ -496,10 +845,16 @@ function Connect-GraphTenant {
         [Parameter(Mandatory = $true)][string]$TenantId,
         [Parameter(Mandatory = $true)][string[]]$Scopes,
         [switch]$Interactive,
-        [switch]$SelectAccount
+        [switch]$SelectAccount,
+        [switch]$ForceCustomerAccountSelection,
+        [switch]$BrowserSso
     )
-    Ensure-GraphAuthenticationModule -State $State
-    $token = Get-GraphAccessToken -State $State -TenantId $TenantId -Scopes $Scopes -Interactive:$Interactive -SelectAccount:$SelectAccount
+    # The module descriptor returned by the installer/import helper contains
+    # deep PowerShell metadata. It is not workflow output and must never leak
+    # into a caller's result stream.
+    [void](Ensure-GraphAuthenticationModule -State $State)
+    $token = Get-GraphAccessToken -State $State -TenantId $TenantId -Scopes $Scopes -Interactive:$Interactive -SelectAccount:$SelectAccount -ForceCustomerAccountSelection:$ForceCustomerAccountSelection -BrowserSso:$BrowserSso
+    $State.GraphAccessToken = [string]$token.accessToken
     $secureToken = ConvertTo-SecureString $token.accessToken -AsPlainText -Force
     Disconnect-MgGraph -ErrorAction SilentlyContinue | Out-Null
     Connect-MgGraph -AccessToken $secureToken -ErrorAction Stop -NoWelcome | Out-Null
@@ -507,8 +862,48 @@ function Connect-GraphTenant {
     if (-not $context -or [string]$context.TenantId -ne [string]$TenantId) {
         throw "Graph heeft de verkeerde tenantcontext geopend. Verwacht: $TenantId."
     }
-    $State.ConnectedAccount = if (-not [string]::IsNullOrWhiteSpace([string]$token.account)) { [string]$token.account } else { [string]$context.Account }
+    $State.ConnectedAccount = if (-not [string]::IsNullOrWhiteSpace([string]$token.account)) {
+        [string]$token.account
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace([string]$State.SessionAccount)) {
+        [string]$State.SessionAccount
+    }
+    else {
+        [string]$context.Account
+    }
+    Write-GraphTokenDiagnostic -State $State -Token $token -Context $context -RequestedTenantId $TenantId
     Write-EngineEvent -State $State -Message "Graph-verbinding met tenant $TenantId is actief." -Level success
+}
+
+function Invoke-BrowserCustomerGraphFallback {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][string]$TenantId,
+        [Parameter(Mandatory = $true)][string]$CustomerName
+    )
+
+    if ($State.AuthMode -ne "wam") {
+        throw "Browser-SSO-fallback is alleen nodig vanuit een Windows WAM-sessie."
+    }
+
+    # WAM is retained for the partner login and Partner Center. Some GDAP
+    # relationships, however, are represented as a B2B guest in WAM and the
+    # resulting token has no customer directory-role (`wids`) context. The
+    # established auth-code browser flow obtains the role-bearing token for
+    # that one customer without device code or persistent refresh tokens.
+    Write-EngineEvent -State $State -Message "Windows WAM heeft voor $CustomerName geen GDAP-rolcontext ontvangen. De browser opent voor SSO met hetzelfde IT-Hulp-account." -Level info -Step customer
+    Connect-GraphTenant -State $State -TenantId $TenantId -Scopes $script:GraphScopes -BrowserSso
+    $State.CustomerAuthMode = "browserSsoFallback"
+
+    if (Test-GraphTokenHasDirectoryRoleContext -AccessToken ([string]$State.GraphAccessToken)) {
+        Write-EngineEvent -State $State -Message "Browser-SSO heeft de GDAP-rolcontext voor $CustomerName bevestigd. Deze klantcontext wordt hergebruikt voor profielen en registratie." -Level success -Step customer
+    }
+    else {
+        # Do not reject a browser token purely on this diagnostic. The
+        # subsequent Graph/Intune calls remain the authority and yield the
+        # existing typed GDAP/PIM error when the customer truly denies access.
+        Write-EngineEvent -State $State -Message "Browser-SSO is voor $CustomerName ingesteld. De klanttoegang wordt nu bij het laden van de Autopilot-profielen bevestigd." -Level info -Step customer
+    }
 }
 
 function Get-BrowserPartnerCenterAccessToken {
@@ -554,6 +949,7 @@ function Get-PartnerCenterAccessToken {
     if (-not [string]::IsNullOrWhiteSpace([string]$State.PartnerCenterAccessToken)) { return [string]$State.PartnerCenterAccessToken }
     try {
         if ($State.AuthMode -eq "wam") {
+            Write-EngineEvent -State $State -Message "Partner Center-token wordt stil opgehaald met hetzelfde IT-Hulp-account." -Level info -Step customer
             $token = Get-WamAccessToken -State $State -TenantId $State.PartnerTenantId -Scopes @($script:PartnerCenterScope) -AllowInteractiveFallback
             $State.PartnerCenterAccessToken = [string]$token.accessToken
         }
@@ -607,6 +1003,58 @@ function Get-PartnerCenterCustomers {
         else { $uri = "https://api.partnercenter.microsoft.com$next" }
     } while ($uri)
     return @($customers | Sort-Object tenantId -Unique)
+}
+
+function Clear-PartnerCenterCustomerCache {
+    param([Parameter(Mandatory = $true)][object]$State)
+
+    $path = [string]$State.CustomerCachePath
+    if (-not [string]::IsNullOrWhiteSpace($path)) {
+        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Write-PartnerCenterCustomerCache {
+    param(
+        [Parameter(Mandatory = $true)][object]$State,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Customers
+    )
+
+    # The stdout pipe is reserved for small worker events. A Partner Center
+    # list can contain hundreds of tenants, so transfer only four plain fields
+    # through a session-local NDJSON cache. Rust reads it in bounded batches.
+    $path = [string]$State.CustomerCachePath
+    if ([string]::IsNullOrWhiteSpace($path)) {
+        throw "Het tijdelijke Partner Center-klantenpad ontbreekt."
+    }
+    $directory = Split-Path -Parent $path
+    if ([string]::IsNullOrWhiteSpace($directory)) {
+        throw "Het tijdelijke Partner Center-klantenpad is ongeldig."
+    }
+    New-Item -ItemType Directory -Path $directory -Force -ErrorAction Stop | Out-Null
+    $temporaryPath = "$path.$PID.tmp"
+    $encoding = [System.Text.UTF8Encoding]::new($false)
+    $writer = $null
+    $count = 0
+    try {
+        $writer = [System.IO.StreamWriter]::new($temporaryPath, $false, $encoding)
+        foreach ($customer in $Customers) {
+            if ($null -eq $customer) { continue }
+            $record = [ordered]@{
+                tenantId = [string]$customer.tenantId
+                customerName = [string]$customer.customerName
+                tenantDomain = [string]$customer.tenantDomain
+                displayName = [string]$customer.displayName
+            }
+            $writer.WriteLine(($record | ConvertTo-Json -Depth 4 -Compress))
+            $count++
+        }
+    }
+    finally {
+        if ($null -ne $writer) { $writer.Dispose() }
+    }
+    Move-Item -LiteralPath $temporaryPath -Destination $path -Force -ErrorAction Stop
+    return [int]$count
 }
 
 function Get-GraphCollection {
@@ -825,6 +1273,7 @@ function Invoke-AutopilotPreflight {
 function Invoke-PartnerLogin {
     param([Parameter(Mandatory = $true)][object]$State)
     $State.PartnerCenterAccessToken = $null
+    $State.GraphAccessToken = $null
     if ($State.AuthMode -eq "wam") {
         Write-EngineEvent -State $State -Message "Windows opent de accountkiezer voor je IT-Hulp-account." -Level info -Step login
         Connect-GraphTenant -State $State -TenantId $State.PartnerTenantId -Scopes $script:GraphScopes -Interactive -SelectAccount
@@ -833,15 +1282,25 @@ function Invoke-PartnerLogin {
         Write-EngineEvent -State $State -Message "OOBE is actief: de browser wordt gebruikt voor de IT-Hulp-aanmelding." -Level info -Step login
         Connect-GraphTenant -State $State -TenantId $State.PartnerTenantId -Scopes $script:GraphScopes -Interactive
     }
-    Write-EngineEvent -State $State -Message "IT-Hulp-account is aangemeld. Partner Center-klanten kunnen worden geladen." -Level success -Step customer
-    return [pscustomobject]@{ tenantId = $State.PartnerTenantId; account = $State.ConnectedAccount; authMode = $State.AuthMode; isOobe = [bool]$State.IsOobe }
+    Write-EngineEvent -State $State -Message "IT-Hulp-account is aangemeld. De Partner Center-klantenlijst wordt nu met dezelfde sessie opgehaald." -Level success -Step customer
+    $State.Customers = @(Get-PartnerCenterCustomers -State $State)
+    Write-EngineEvent -State $State -Message "$($State.Customers.Count) klant(en) zijn geladen vanuit Partner Center." -Level success -Step customer
+    [void](Write-PartnerCenterCustomerCache -State $State -Customers $State.Customers)
+    return [ordered]@{
+        tenantId = [string]$State.PartnerTenantId
+        account = [string]$State.ConnectedAccount
+        authMode = [string]$State.AuthMode
+        isOobe = [bool]$State.IsOobe
+        customerCount = [int]$State.Customers.Count
+    }
 }
 
 function Invoke-LoadCustomers {
     param([Parameter(Mandatory = $true)][object]$State)
     Write-EngineEvent -State $State -Message "Partner Center-klantenlijst wordt opgehaald." -Level info
     $State.Customers = @(Get-PartnerCenterCustomers -State $State)
-    [pscustomobject]@{ customers = @($State.Customers) }
+    [void](Write-PartnerCenterCustomerCache -State $State -Customers $State.Customers)
+    [ordered]@{ customerCount = [int]$State.Customers.Count }
 }
 
 function Invoke-ConnectCustomer {
@@ -852,10 +1311,21 @@ function Invoke-ConnectCustomer {
     $customer = @($State.Customers | Where-Object { $_.tenantId -eq $TenantId } | Select-Object -First 1)
     if ($customer.Count -ne 1) { throw "De gekozen klanttenant komt niet uit de actieve Partner Center-klantenlijst." }
     Connect-GraphTenant -State $State -TenantId $TenantId -Scopes $script:GraphScopes
+    if ($State.AuthMode -eq "wam") {
+        if (Test-GraphTokenHasDirectoryRoleContext -AccessToken ([string]$State.GraphAccessToken)) {
+            $State.CustomerAuthMode = "wam"
+        }
+        else {
+            Invoke-BrowserCustomerGraphFallback -State $State -TenantId $TenantId -CustomerName ([string]$customer[0].customerName)
+        }
+    }
+    else {
+        $State.CustomerAuthMode = "browserOobe"
+    }
     $State.TargetTenantId = $TenantId
     $State.RegistrationCompleted = $false
     Write-EngineEvent -State $State -Message "Verbonden met $($customer[0].customerName)." -Level success
-    [pscustomobject]@{ tenantId = $TenantId; account = $State.ConnectedAccount; authMode = $State.AuthMode }
+    [pscustomobject]@{ tenantId = $TenantId; account = $State.ConnectedAccount; authMode = $State.AuthMode; customerAuthMode = $State.CustomerAuthMode }
 }
 
 function Invoke-ResetSession {
@@ -865,30 +1335,30 @@ function Invoke-ResetSession {
         [CaptureTech.AutopilotGdap.WamBroker]::ResetSession()
     }
     $State.PartnerCenterAccessToken = $null
+    $State.GraphAccessToken = $null
     $State.BrowserInteractiveCompleted = $false
     $State.SessionAccount = ""
     $State.SessionHomeAccountId = ""
     $State.ConnectedAccount = ""
     $State.Customers = @()
+    Clear-PartnerCenterCustomerCache -State $State
     $State.Profiles = @()
     $State.TargetTenantId = ""
+    $State.CustomerAuthMode = ""
     $State.RegistrationCompleted = $false
     Write-EngineEvent -State $State -Message "De appsessie is gewist. Windows-accounts en WAM-tokens van andere apps zijn niet gewijzigd." -Level info -Step login
     [pscustomobject]@{ authMode = $State.AuthMode; sessionReset = $true }
 }
 
-function Invoke-LoadProfiles {
+function Get-AutopilotProfilesForCurrentTenant {
     param([Parameter(Mandatory = $true)][object]$State)
-    if ([string]::IsNullOrWhiteSpace($State.TargetTenantId)) { throw "Kies eerst een klanttenant." }
-    $context = Get-MgContext
-    if (-not $context -or [string]$context.TenantId -ne [string]$State.TargetTenantId) { throw "De Graph-sessie hoort niet bij de geselecteerde klanttenant." }
-    Write-EngineEvent -State $State -Message "Autopilot-profielen en groepsassignments worden opgehaald." -Level info
+
     $response = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/deviceManagement/windowsAutopilotDeploymentProfiles" -ErrorAction Stop
-    $profiles = @()
+    $profiles = [System.Collections.Generic.List[object]]::new()
     foreach ($profile in @($response.value)) {
         $groups = @(Get-ProfileAssignments -Profile $profile)
         $candidates = if ($groups.Count -gt 0) { @(Get-ProfileGroupCandidates -State $State -Groups $groups) } else { @() }
-        $profiles += [pscustomobject]@{
+        [void]$profiles.Add([pscustomobject]@{
             profileId = [string]$profile.id
             displayName = [string]$profile.displayName
             groups = @($groups | ForEach-Object {
@@ -899,10 +1369,56 @@ function Invoke-LoadProfiles {
                 }
             })
             groupCandidates = @($candidates)
+        })
+    }
+    return $profiles.ToArray()
+}
+
+function Invoke-LoadProfiles {
+    param([Parameter(Mandatory = $true)][object]$State)
+    if ([string]::IsNullOrWhiteSpace($State.TargetTenantId)) { throw "Kies eerst een klanttenant." }
+    $context = Get-MgContext
+    if (-not $context -or [string]$context.TenantId -ne [string]$State.TargetTenantId) { throw "De Graph-sessie hoort niet bij de geselecteerde klanttenant." }
+    Write-EngineEvent -State $State -Message "Autopilot-profielen en groepsassignments worden opgehaald." -Level info
+
+    # A WAM token can be tenant-correct while still representing only a B2B
+    # guest, without the customer-side GDAP directory-role context. In that
+    # case the browser auth-code flow is the supported targeted fallback. A
+    # WAM token that does contain the context still gets one native refresh
+    # before browser SSO is considered for a later authorization failure.
+    $refreshedCustomerToken = $false
+    while ($true) {
+        try {
+            $State.Profiles = @(Get-AutopilotProfilesForCurrentTenant -State $State)
+            return [pscustomobject]@{ profiles = @($State.Profiles) }
+        }
+        catch {
+            $authorizationFailure = Test-GraphAuthorizationFailure -ErrorRecord $_
+            if ($authorizationFailure -and $State.AuthMode -eq "wam" -and $State.CustomerAuthMode -eq "wam" -and -not (Test-GraphTokenHasDirectoryRoleContext -AccessToken ([string]$State.GraphAccessToken))) {
+                Invoke-BrowserCustomerGraphFallback -State $State -TenantId $State.TargetTenantId -CustomerName "de geselecteerde klant"
+                continue
+            }
+            if ($refreshedCustomerToken -and $authorizationFailure) {
+                $autopilotDiagnostic = Get-GraphResponseDiagnostic -ErrorRecord $_
+                Write-EngineEvent -State $State -Message "Intune/Autopilot-response: HTTP $($autopilotDiagnostic.statusCode) $($autopilotDiagnostic.reasonPhrase); code=$($autopilotDiagnostic.serviceCode); bericht=$($autopilotDiagnostic.serviceMessage)" -Level warning -Technical $true
+                $groupAccess = Test-CurrentGraphGroupAccess -State $State
+                if ($groupAccess.succeeded) {
+                    Throw-AutopilotGdapError -Code "gdapPimDenied" -Message "Je klanttenanttoken werkt voor Microsoft Graph, maar de Intune/Autopilot-service weigert de GDAP/PIM-rechten. Controleer in Partner Center de actieve relatie én de Intune Administrator-rol voor jouw PIM-groep." -Details "Autopilot HTTP $($autopilotDiagnostic.statusCode) $($autopilotDiagnostic.reasonPhrase); serviceCode=$($autopilotDiagnostic.serviceCode)"
+                }
+                Throw-AutopilotGdapError -Code "gdapPimDenied" -Message "Microsoft Graph wijst de klanttenanttoken ook buiten Intune af. Controleer klanttenanttoegang, Conditional Access en de actieve GDAP/PIM-rol." -Details "Autopilot HTTP $($autopilotDiagnostic.statusCode) $($autopilotDiagnostic.reasonPhrase); groepscontrole HTTP $($groupAccess.diagnostic.statusCode) $($groupAccess.diagnostic.reasonPhrase)"
+            }
+            if ($refreshedCustomerToken -or $State.AuthMode -ne "wam" -or $State.CustomerAuthMode -eq "browserSsoFallback" -or -not $authorizationFailure) {
+                throw
+            }
+            $refreshedCustomerToken = $true
+            Write-EngineEvent -State $State -Message "Microsoft Graph accepteert het stille GDAP-token niet. Windows ververst nu één keer de klanttenantaanmelding voor hetzelfde IT-Hulp-account." -Level info -Step customer
+            Connect-GraphTenant -State $State -TenantId $State.TargetTenantId -Scopes $script:GraphScopes -Interactive -ForceCustomerAccountSelection
+            if (-not (Test-GraphTokenHasDirectoryRoleContext -AccessToken ([string]$State.GraphAccessToken))) {
+                Invoke-BrowserCustomerGraphFallback -State $State -TenantId $State.TargetTenantId -CustomerName "de geselecteerde klant"
+            }
+            Write-EngineEvent -State $State -Message "De klanttenanttoken is vernieuwd. Autopilot-profielen worden opnieuw opgehaald." -Level info -Step customer
         }
     }
-    $State.Profiles = @($profiles)
-    [pscustomobject]@{ profiles = @($State.Profiles) }
 }
 
 function Invoke-RegisterDevice {

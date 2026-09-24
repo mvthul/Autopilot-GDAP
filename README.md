@@ -7,7 +7,7 @@ CaptureTech-toolset voor IT-hulpmedewerkers om Windows Autopilot-apparaten via G
 
 ## Nieuwe CaptureTech desktop-app
 
-Naast de bestaande PowerShell/WPF-tool staat er een moderne, portable Windows-desktop-app in [`tauri-app`](tauri-app). Op een normale Windows-desktop gebruikt deze Windows Web Account Manager (WAM), delegated Graph-rechten en de Autopilot-flow. Tijdens OOBE gebruikt hij bewust browser-SSO als fallback. De app heeft een CaptureTech-interface voor klantselectie, profielkeuze, groepsafhandeling, live voortgang en herstart.
+Naast de bestaande PowerShell/WPF-tool staat er een moderne, portable Windows-desktop-app in [`tauri-app`](tauri-app). Op een normale Windows-desktop gebruikt deze Windows Web Account Manager (WAM) voor de partner-sessie, delegated Graph-rechten en de Autopilot-flow. Tijdens OOBE gebruikt hij browser-SSO. Wanneer WAM voor een specifieke GDAP-klant alleen een B2B-gasttoken zonder klantrolcontext oplevert, opent de app automatisch browser-SSO voor uitsluitend die klant. De app heeft een CaptureTech-interface voor klantselectie, profielkeuze, groepsafhandeling, live voortgang en herstart.
 
 De eerste Tauri-release is bedoeld voor Windows 10/11 x64 en vraagt altijd administratorrechten. De EXE is portable: installatie is niet nodig. Als Windows de EXE toch niet verhoogd start, toont de app een knop **Start opnieuw als administrator**; die opent de normale UAC-bevestiging en start dezelfde EXE opnieuw met een verhoogd token. Windows SmartScreen kan een waarschuwing tonen zolang de EXE niet code-signed is.
 
@@ -61,7 +61,7 @@ irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/S
 
 Het setupscript maakt een multi-tenant public-client app aan, configureert de delegated Graph-permissies, maakt de Enterprise Application aan en toont ook de Partner Center-consentlink voor de volledige klantenlijst. Er wordt geen client secret aangemaakt.
 
-De tool gebruikt Partner Center `/v1/customers` voor de klantenlijst. Daardoor worden ook klanten zichtbaar die niet in Graph `/contracts` staan, zoals Hanab. Graph wordt daarna gebruikt voor Intune en Autopilot. Graph en Partner Center zijn afzonderlijke resources, maar de Tauri-app vraagt op een normale desktop slechts één keer interactief een WAM-account; de overige tokens worden stil voor hetzelfde account opgehaald.
+De tool gebruikt Partner Center `/v1/customers` voor de klantenlijst. Daardoor worden ook klanten zichtbaar die niet in Graph `/contracts` staan, zoals Hanab. Graph wordt daarna gebruikt voor Intune en Autopilot. Graph en Partner Center zijn afzonderlijke resources, maar de Tauri-app vraagt op een normale desktop slechts één keer interactief een WAM-account voor de partner-sessie; Partner Center-tokens worden daarna stil voor hetzelfde account opgehaald.
 
 De Tauri-app bewaart geen eigen refresh-tokenbestand. Tokens en het gekozen account bestaan uitsluitend in de actieve worker; een oude lokale `partnercenter.v1.token`-cache wordt na een succesvolle nieuwe sessie verwijderd. WAM beheert alleen zijn eigen Windows-brokercontext. Device code wordt niet gebruikt. Tijdens OOBE wordt browser-SSO gebruikt omdat WAM daar niet beschikbaar is.
 
@@ -69,7 +69,7 @@ De huidige partner-app-client-id is al ingevuld in `Get-AutopilotGDAP.ps1`. Als 
 
 ### WAM en sessies in de Tauri-app
 
-Op een gewone Windows 10/11-desktop opent stap 1 één native Windows-accountkiezer. De app gebruikt daarna dezelfde gekozen gebruiker stil voor Partner Center en voor iedere geselecteerde klanttenant. Conditional Access, MFA, PIM-activatie, accountwissel of ontbrekende consent kan nog een gerichte native verificatie vragen. Met **Wissel account** wordt alleen de appsessie gewist; Windows-brede WAM-accounts en andere apps worden niet afgemeld.
+Op een gewone Windows 10/11-desktop opent stap 1 één native Windows-accountkiezer. De app gebruikt daarna dezelfde gekozen gebruiker stil voor Partner Center. Voor een klanttenant probeert de app eerst een tenantgebonden WAM-token. Als dat token geen GDAP-directoryrolcontext (`wids`) bevat — een bekende B2B/GDAP-combinatie — opent de app automatisch browser-SSO voor alleen die klant, met een login-hint voor hetzelfde IT-Hulp-account. De browser-token blijft uitsluitend in de actieve worker en wordt hergebruikt voor profielen en registratie. Conditional Access, MFA, PIM-activatie, accountwissel of ontbrekende consent kan nog een gerichte verificatie vragen. Met **Wissel account** wordt alleen de appsessie gewist; Windows-brede WAM-accounts en andere apps worden niet afgemeld.
 
 De public-client appregistratie moet de redirect URI `ms-appx-web://Microsoft.AAD.BrokerPlugin/<CLIENT-ID>` bevatten. `Setup-AutopilotApp.ps1` zet deze naast de localhost-redirects. Voer het setupscript opnieuw uit wanneer een oudere appregistratie deze redirect niet heeft.
 

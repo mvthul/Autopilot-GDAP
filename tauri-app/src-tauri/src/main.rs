@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::{
+    collections::HashSet,
     fs,
     io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
@@ -110,6 +111,10 @@ impl WorkerProcess {
         let runtime_dir = write_runtime_scripts(app)?;
         let worker_path = runtime_dir.join("AutopilotGdap.Worker.ps1");
         let engine_path = runtime_dir.join("AutopilotGdap.Engine.psm1");
+        let customer_cache_path = runtime_dir.join("partner-center-customers.ndjson");
+        // Customer metadata is session data, not a persisted cache. A stale
+        // file can only originate from an interrupted previous app instance.
+        let _ = fs::remove_file(&customer_cache_path);
         let executable = if cfg!(target_os = "windows") {
             "powershell.exe"
         } else {
@@ -120,7 +125,6 @@ impl WorkerProcess {
         command
             .arg("-NoLogo")
             .arg("-NoProfile")
-            .arg("-NonInteractive")
             .arg("-ExecutionPolicy")
             .arg("Bypass")
             .arg("-File")
@@ -130,6 +134,7 @@ impl WorkerProcess {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        command.env("CAPTURETECH_CUSTOMER_CACHE_PATH", &customer_cache_path);
 
         #[cfg(target_os = "windows")]
         {
@@ -164,7 +169,7 @@ impl WorkerProcess {
             .ok_or_else(|| "De PowerShell-worker heeft geen foutkanaal.".to_string())?;
         let busy = Arc::new(AtomicBool::new(false));
 
-        spawn_stdout_reader(app.clone(), stdout, Arc::clone(&busy));
+        spawn_stdout_reader(app.clone(), stdout, Arc::clone(&busy), customer_cache_path);
         spawn_stderr_reader(app.clone(), stderr);
 
         Ok(Self {
@@ -187,8 +192,10 @@ fn spawn_stdout_reader(
     app: AppHandle,
     stdout: impl std::io::Read + Send + 'static,
     busy: Arc<AtomicBool>,
+    customer_cache_path: PathBuf,
 ) {
     thread::spawn(move || {
+        let mut failed_customer_cache_requests = HashSet::new();
         for line in BufReader::new(stdout).lines() {
             let Ok(line) = line else { break };
             if line.trim().is_empty() {
@@ -196,6 +203,42 @@ fn spawn_stdout_reader(
             }
             match serde_json::from_str::<Value>(&line) {
                 Ok(message) => {
+                    if message.get("kind").and_then(Value::as_str) == Some("event") {
+                        let request_id = message
+                            .get("requestId")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default();
+                        match message.get("event").and_then(Value::as_str) {
+                            Some("customerCacheReady") => {
+                                if let Err(error) =
+                                    emit_customer_cache(&app, request_id, &customer_cache_path)
+                                {
+                                    failed_customer_cache_requests.insert(request_id.to_string());
+                                    busy.store(false, Ordering::SeqCst);
+                                    emit_worker_failure(&app, request_id, error);
+                                }
+                                continue;
+                            }
+                            Some("actionComplete") => {
+                                if failed_customer_cache_requests.remove(request_id) {
+                                    continue;
+                                }
+                                busy.store(false, Ordering::SeqCst);
+                                let data = message.get("payload").cloned().unwrap_or(Value::Null);
+                                let _ = app.emit(
+                                    "worker-event",
+                                    json!({
+                                        "kind": "result",
+                                        "requestId": request_id,
+                                        "ok": true,
+                                        "data": data,
+                                    }),
+                                );
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
                     if message.get("kind").and_then(Value::as_str) == Some("result") {
                         busy.store(false, Ordering::SeqCst);
                     }
@@ -220,6 +263,93 @@ fn spawn_stdout_reader(
         }
         busy.store(false, Ordering::SeqCst);
     });
+}
+
+fn emit_worker_failure(app: &AppHandle, request_id: &str, message: String) {
+    let _ = app.emit(
+        "worker-event",
+        json!({
+            "kind": "result",
+            "requestId": request_id,
+            "ok": false,
+            "error": {
+                "code": "operationFailed",
+                "message": message,
+            },
+        }),
+    );
+}
+
+fn load_customer_cache(path: &Path) -> Result<Vec<Value>, String> {
+    let contents = fs::read_to_string(path).map_err(|error| {
+        format!("De tijdelijke Partner Center-klantenlijst kon niet worden gelezen: {error}")
+    })?;
+    let _ = fs::remove_file(path);
+
+    let mut customers = Vec::new();
+    for (line_number, line) in contents.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let record: Value = serde_json::from_str(line).map_err(|error| {
+            format!(
+                "Een tijdelijk Partner Center-klantrecord is ongeldig (regel {}): {error}",
+                line_number + 1
+            )
+        })?;
+        customers.push(normalize_customer_record(record, line_number + 1)?);
+    }
+    Ok(customers)
+}
+
+fn normalize_customer_record(record: Value, line_number: usize) -> Result<Value, String> {
+    let object = record.as_object().ok_or_else(|| {
+        format!("Een tijdelijk Partner Center-klantrecord is geen object (regel {line_number}).")
+    })?;
+    let field = |name: &str| -> Result<String, String> {
+        let value = object.get(name).and_then(Value::as_str).ok_or_else(|| {
+            format!("Een tijdelijk Partner Center-klantrecord mist '{name}' (regel {line_number}).")
+        })?;
+        if value.len() > 2048 {
+            return Err(format!(
+                "Een tijdelijk Partner Center-klantveld is te lang (regel {line_number})."
+            ));
+        }
+        Ok(value.to_string())
+    };
+
+    let tenant_id = field("tenantId")?;
+    Uuid::parse_str(&tenant_id).map_err(|_| {
+        format!("Een tijdelijk Partner Center-tenant-ID is ongeldig (regel {line_number}).")
+    })?;
+    Ok(json!({
+        "tenantId": tenant_id,
+        "customerName": field("customerName")?,
+        "tenantDomain": field("tenantDomain")?,
+        "displayName": field("displayName")?,
+    }))
+}
+
+fn emit_customer_cache(app: &AppHandle, request_id: &str, path: &Path) -> Result<(), String> {
+    if request_id.trim().is_empty() {
+        return Err("De Partner Center-klantenlijst mist een request-ID.".to_string());
+    }
+    let customers = load_customer_cache(path)?;
+    for customer_chunk in customers.chunks(20) {
+        app.emit(
+            "worker-event",
+            json!({
+                "kind": "event",
+                "requestId": request_id,
+                "event": "customers",
+                "payload": { "customers": customer_chunk },
+            }),
+        )
+        .map_err(|error| {
+            format!("De Partner Center-klantenlijst kon niet naar de app worden gestuurd: {error}")
+        })?;
+    }
+    Ok(())
 }
 
 fn spawn_stderr_reader(app: AppHandle, stderr: impl std::io::Read + Send + 'static) {
@@ -500,7 +630,10 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{utf8_with_bom, validate_customer_tenant, validate_request, FrontendRequest};
+    use super::{
+        load_customer_cache, utf8_with_bom, validate_customer_tenant, validate_request,
+        FrontendRequest,
+    };
     use serde_json::json;
 
     #[test]
@@ -538,5 +671,26 @@ mod tests {
         let encoded = utf8_with_bom("geïnstalleerd");
         assert_eq!(&encoded[..3], &[0xEF, 0xBB, 0xBF]);
         assert_eq!(std::str::from_utf8(&encoded[3..]).unwrap(), "geïnstalleerd");
+    }
+
+    #[test]
+    fn reads_and_normalizes_the_session_customer_cache() {
+        let path = std::env::temp_dir().join(format!(
+            "capturetech-customer-cache-{}.ndjson",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(
+            &path,
+            concat!(
+                "{\"tenantId\":\"609ba4a6-ac45-4a08-b108-54f46f635e6d\",\"customerName\":\"Hanab\",\"tenantDomain\":\"otworkstation.nl\",\"displayName\":\"Hanab [otworkstation.nl]\"}\n",
+                "{\"tenantId\":\"26aaae92-5737-48a2-b00c-27aff5b013e7\",\"customerName\":\"IT-Hulp\",\"tenantDomain\":\"ithulp.example\",\"displayName\":\"IT-Hulp [ithulp.example]\"}\n"
+            ),
+        )
+        .unwrap();
+
+        let customers = load_customer_cache(&path).unwrap();
+        assert_eq!(customers.len(), 2);
+        assert_eq!(customers[0]["customerName"], "Hanab");
+        assert!(!path.exists());
     }
 }
