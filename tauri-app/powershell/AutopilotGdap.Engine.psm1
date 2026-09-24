@@ -304,6 +304,29 @@ function Get-MsalAssemblyPath {
     return [string]$matches[0].FullName
 }
 
+function Get-WamBridgeReferenceAssemblies {
+    param(
+        [Parameter(Mandatory = $true)][string]$MsalPath,
+        [Parameter(Mandatory = $true)][string]$BrokerPath
+    )
+
+    # Microsoft.Identity.Client.Broker exposes a Windows Forms overload for
+    # WithParentActivityOrWindow.  Add-Type does not add that framework
+    # assembly automatically when compiling the in-memory bridge in Windows
+    # PowerShell 5.1, so explicitly include it here.
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        $formsAssemblyPath = [string][System.Windows.Forms.IWin32Window].Assembly.Location
+        if ([string]::IsNullOrWhiteSpace($formsAssemblyPath) -or -not (Test-Path -LiteralPath $formsAssemblyPath)) {
+            throw "System.Windows.Forms kon niet als WAM-bridgeverwijzing worden gevonden."
+        }
+        return @($MsalPath, $BrokerPath, $formsAssemblyPath)
+    }
+    catch {
+        Throw-AutopilotGdapError -Code "wamUnavailable" -Message "Windows Forms ontbreekt, waardoor Windows Web Account Manager niet kan worden gestart." -Details $_.Exception.Message
+    }
+}
+
 function Initialize-WamBroker {
     param([Parameter(Mandatory = $true)][object]$State)
     if ($State.AuthMode -ne "wam") { return }
@@ -396,7 +419,8 @@ namespace CaptureTech.AutopilotGdap
     }
 }
 '@
-        Add-Type -TypeDefinition $bridgeSource -ReferencedAssemblies @($msalPath, $brokerPath) -Language CSharp -ErrorAction Stop
+        $bridgeReferences = @(Get-WamBridgeReferenceAssemblies -MsalPath $msalPath -BrokerPath $brokerPath)
+        Add-Type -TypeDefinition $bridgeSource -ReferencedAssemblies $bridgeReferences -Language CSharp -ErrorAction Stop
     }
     try {
         [CaptureTech.AutopilotGdap.WamBroker]::Initialize($State.PublicClientId, [int64]$env:CAPTURETECH_PARENT_HWND)

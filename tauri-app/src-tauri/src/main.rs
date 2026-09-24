@@ -259,11 +259,22 @@ fn write_runtime_scripts(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(directory)
 }
 
+fn utf8_with_bom(contents: &str) -> Vec<u8> {
+    let mut encoded = Vec::with_capacity(contents.len() + 3);
+    encoded.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
+    encoded.extend_from_slice(contents.as_bytes());
+    encoded
+}
+
 fn write_if_changed(path: &Path, contents: &str) -> Result<(), String> {
-    if fs::read_to_string(path).ok().as_deref() == Some(contents) {
+    // Windows PowerShell 5.1 treats a BOM-less script as ANSI. The embedded
+    // scripts contain Dutch text, so write UTF-8 with a BOM to prevent
+    // mojibake in worker events and error messages.
+    let encoded = utf8_with_bom(contents);
+    if fs::read(path).ok().as_deref() == Some(encoded.as_slice()) {
         return Ok(());
     }
-    fs::write(path, contents)
+    fs::write(path, encoded)
         .map_err(|error| format!("Runtimebestand kon niet worden geschreven: {error}"))
 }
 
@@ -489,7 +500,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_customer_tenant, validate_request, FrontendRequest};
+    use super::{utf8_with_bom, validate_customer_tenant, validate_request, FrontendRequest};
     use serde_json::json;
 
     #[test]
@@ -520,5 +531,12 @@ mod tests {
             payload: json!({ "tenantId": "609ba4a6-ac45-4a08-b108-54f46f635e6d" }),
         };
         assert!(validate_request(&request).is_err());
+    }
+
+    #[test]
+    fn runtime_scripts_are_written_as_utf8_with_bom() {
+        let encoded = utf8_with_bom("geïnstalleerd");
+        assert_eq!(&encoded[..3], &[0xEF, 0xBB, 0xBF]);
+        assert_eq!(std::str::from_utf8(&encoded[3..]).unwrap(), "geïnstalleerd");
     }
 }

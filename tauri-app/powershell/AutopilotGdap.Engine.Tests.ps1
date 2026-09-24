@@ -41,6 +41,12 @@ $scopes = @(& $module { ConvertTo-MsalScopes -Scopes @("Directory.Read.All", "ht
 Assert-True -Condition ($scopes -contains "https://graph.microsoft.com/Directory.Read.All") -Name "Graph-scope krijgt de vaste Graph-resource"
 Assert-True -Condition ($scopes -contains "https://api.partnercenter.microsoft.com/user_impersonation") -Name "Partner Center-scope blijft ongewijzigd"
 
+if ($env:OS -eq "Windows_NT") {
+    $wamReferences = @(& $module { Get-WamBridgeReferenceAssemblies -MsalPath "msal-test.dll" -BrokerPath "broker-test.dll" })
+    $hasFormsReference = (@($wamReferences | Where-Object { $_ -match 'System\.Windows\.Forms\.dll$' })).Count -eq 1
+    Assert-True -Condition $hasFormsReference -Name "WAM-bridge verwijst naar System.Windows.Forms"
+}
+
 $customerError = & $module {
     param($record)
     Get-AutopilotGdapError -ErrorRecord $record
