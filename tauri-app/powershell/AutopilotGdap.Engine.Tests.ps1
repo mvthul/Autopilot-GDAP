@@ -41,6 +41,11 @@ $scopes = @(& $module { ConvertTo-MsalScopes -Scopes @("Directory.Read.All", "ht
 Assert-True -Condition ($scopes -contains "https://graph.microsoft.com/Directory.Read.All") -Name "Graph-scope krijgt de vaste Graph-resource"
 Assert-True -Condition ($scopes -contains "https://api.partnercenter.microsoft.com/user_impersonation") -Name "Partner Center-scope blijft ongewijzigd"
 
+$engineText = Get-Content -LiteralPath $enginePath -Raw -ErrorAction Stop
+Assert-True -Condition ($engineText -match '\.WithDefaultRedirectUri\(\)') -Name "WAM gebruikt de standaard broker-redirect in MSAL"
+Assert-True -Condition ($engineText -notmatch '\.WithRedirectUri\("ms-appx-web://') -Name "WAM forceert de BrokerPlugin-redirect niet in MSAL"
+Assert-True -Condition ($engineText -match 'var authorityTenant = selectAccount \? "organizations" : tenantId;') -Name "De eerste WAM-aanmelding gebruikt de Windows-accountkiezer"
+
 if ($env:OS -eq "Windows_NT") {
     $wamReferences = @(& $module { Get-WamBridgeReferenceAssemblies -MsalPath "msal-test.dll" -BrokerPath "broker-test.dll" })
     $hasFormsReference = (@($wamReferences | Where-Object { $_ -match 'System\.Windows\.Forms\.dll$' })).Count -eq 1

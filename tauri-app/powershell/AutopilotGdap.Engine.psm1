@@ -375,20 +375,30 @@ namespace CaptureTech.AutopilotGdap
             lock (Gate)
             {
                 if (application != null) return;
+                var brokerOptions = new BrokerOptions(BrokerOptions.OperatingSystems.Windows);
+                brokerOptions.Title = "CaptureTech Autopilot GDAP";
                 var builder = PublicClientApplicationBuilder.Create(clientId)
                     .WithAuthority(AzureCloudInstance.AzurePublic, "organizations")
-                    .WithRedirectUri("ms-appx-web://Microsoft.AAD.BrokerPlugin/" + clientId)
+                    // The ms-appx-web BrokerPlugin redirect must be registered
+                    // in Entra, but must not be forced here. MSAL chooses the
+                    // correct WAM redirect through WithDefaultRedirectUri().
+                    .WithDefaultRedirectUri()
                     .WithParentActivityOrWindow(() => new IntPtr(parentWindowHandle));
                 application = BrokerExtension.WithBroker(
                     builder,
-                    new BrokerOptions(BrokerOptions.OperatingSystems.Windows)).Build();
+                    brokerOptions).Build();
             }
         }
 
         public static WamToken Acquire(string tenantId, string[] scopes, bool interactive, bool selectAccount)
         {
             if (application == null) throw new InvalidOperationException("WAM is niet geïnitialiseerd.");
-            var authority = "https://login.microsoftonline.com/" + tenantId;
+            // A tenant-specific WAM authority suppresses the native Windows
+            // account picker. Use organizations for the one interactive
+            // account selection, then acquire all follow-up tenant tokens
+            // silently for that selected account.
+            var authorityTenant = selectAccount ? "organizations" : tenantId;
+            var authority = "https://login.microsoftonline.com/" + authorityTenant;
             AuthenticationResult result;
             if (interactive)
             {
