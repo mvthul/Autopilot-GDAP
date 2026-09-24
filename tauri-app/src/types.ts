@@ -2,6 +2,26 @@ export type WorkflowStep = "login" | "customer" | "configure" | "register" | "co
 
 export type LogLevel = "info" | "success" | "warning" | "error";
 
+export type AuthMode = "wam" | "browserOobe";
+
+/** Authentication source for the active customer Graph context. */
+export type CustomerAuthMode = "wam" | "browserSsoFallback" | "browserOobe";
+
+export type WorkerErrorCode =
+  | "customerConsentRequired"
+  | "partnerCenterConsentRequired"
+  | "gdapPimDenied"
+  | "wamUnavailable"
+  | "authCancelled"
+  | "authenticationRequired"
+  | "operationFailed";
+
+export interface WorkerError {
+  code: WorkerErrorCode;
+  message: string;
+  details?: string;
+}
+
 export interface Customer {
   tenantId: string;
   customerName: string;
@@ -40,6 +60,27 @@ export interface PreflightResult {
   isAdministrator: boolean;
   powershellVersion: string;
   graphModuleInstalled: boolean;
+  authMode: AuthMode;
+  isOobe: boolean;
+  wamAvailable: boolean;
+}
+
+export interface LoginResult {
+  tenantId: string;
+  account: string;
+  authMode: AuthMode;
+  isOobe: boolean;
+  /** Demo and older workers can still return a complete list. */
+  customers?: Customer[];
+  /** Production workers transfer the list through small `customers` events. */
+  customerCount?: number;
+}
+
+export interface CustomerConnectionResult {
+  tenantId: string;
+  account: string;
+  authMode: AuthMode;
+  customerAuthMode?: CustomerAuthMode;
 }
 
 export interface RegisterResult {
@@ -56,6 +97,7 @@ export type WorkerAction =
   | { action: "loadCustomers"; payload: Record<string, never> }
   | { action: "connectCustomer"; payload: { tenantId: string } }
   | { action: "loadProfiles"; payload: Record<string, never> }
+  | { action: "resetSession"; payload: Record<string, never> }
   | {
       action: "registerDevice";
       payload: { profileId: string; staticGroupId?: string; hostname?: string; verbose: boolean };
@@ -69,16 +111,17 @@ export type WorkerRequest = WorkerAction & {
 export interface WorkerEvent {
   kind: "event" | "result";
   requestId: string;
-  event?: "log" | "status" | "progress";
+  event?: "log" | "status" | "progress" | "customers";
   payload?: {
     message?: string;
     level?: LogLevel;
     technical?: boolean;
     step?: WorkflowStep;
+    customers?: Customer[];
   };
   ok?: boolean;
   data?: unknown;
-  error?: string;
+  error?: WorkerError;
 }
 
 export interface LogEntry {

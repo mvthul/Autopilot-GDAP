@@ -35,7 +35,7 @@ function Write-WorkerResult {
         [Parameter(Mandatory = $true)][string]$RequestId,
         [bool]$Ok,
         [AllowNull()][object]$Data,
-        [string]$Error
+        [AllowNull()][object]$Error
     )
     $message = [ordered]@{
         kind = "result"
@@ -55,6 +55,27 @@ function Get-RequestValue {
     $property = $Payload.PSObject.Properties[$Name]
     if ($null -eq $property) { return $null }
     return $property.Value
+}
+
+function Get-CustomerCacheCompletionData {
+    param(
+        [Parameter(Mandatory = $true)][string]$Action,
+        [Parameter(Mandatory = $true)][object]$State
+    )
+
+    # Never serialize the PowerShell return stream from the Partner Center
+    # action. The engine can emit diagnostic objects on that stream on Windows
+    # PowerShell, despite the customer cache itself having been written.
+    if ($Action -eq "loginPartner") {
+        return [ordered]@{
+            tenantId = [string]$State.PartnerTenantId
+            account = [string]$State.ConnectedAccount
+            authMode = [string]$State.AuthMode
+            isOobe = [bool]$State.IsOobe
+            customerCount = [int](@($State.Customers).Count)
+        }
+    }
+    return [ordered]@{ customerCount = [int](@($State.Customers).Count) }
 }
 
 if (-not (Test-Path -LiteralPath $EnginePath)) {
@@ -90,20 +111,31 @@ while ($true) {
                 $data = Invoke-AutopilotPreflight -State $state
             }
             "loginPartner" {
-                $data = Invoke-PartnerLogin -State $state
+                [void](Invoke-PartnerLogin -State $state)
+                $data = Get-CustomerCacheCompletionData -Action $action -State $state
             }
             "loadCustomers" {
-                $data = Invoke-LoadCustomers -State $state
+                [void](Invoke-LoadCustomers -State $state)
+                $data = Get-CustomerCacheCompletionData -Action $action -State $state
             }
             "connectCustomer" {
                 $tenantId = [string](Get-RequestValue -Payload $payload -Name "tenantId")
                 if ($tenantId -notmatch '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$') {
                     throw "De klanttenant-ID is ongeldig."
                 }
-                $data = Invoke-ConnectCustomer -State $state -TenantId $tenantId
+                [void](Invoke-ConnectCustomer -State $state -TenantId $tenantId)
+                $data = [ordered]@{
+                    tenantId = [string]$state.TargetTenantId
+                    account = [string]$state.ConnectedAccount
+                    authMode = [string]$state.AuthMode
+                    customerAuthMode = [string]$state.CustomerAuthMode
+                }
             }
             "loadProfiles" {
                 $data = Invoke-LoadProfiles -State $state
+            }
+            "resetSession" {
+                $data = Invoke-ResetSession -State $state
             }
             "registerDevice" {
                 $profileId = [string](Get-RequestValue -Payload $payload -Name "profileId")
@@ -121,13 +153,21 @@ while ($true) {
                 throw "Onbekende backendactie: $action"
             }
         }
-        Write-WorkerResult -RequestId $requestId -Ok $true -Data $data
+        if ($action -in @("loginPartner", "loadCustomers")) {
+            # The customer records are kept in the private runtime cache. Rust
+            # streams the cache to the UI, then converts this small completion
+            # event into the normal frontend result.
+            Write-WorkerEvent -RequestId $requestId -Event "customerCacheReady" -Payload $data
+        }
+        # Successful actions always end as an event with a deliberately
+        # bounded payload. Rust converts it to the frontend result protocol.
+        # This avoids serialising any incidental PowerShell pipeline objects.
+        Write-WorkerEvent -RequestId $requestId -Event "actionComplete" -Payload $data
     }
     catch {
-        $detail = $_.Exception.Message
-        if ([string]::IsNullOrWhiteSpace($detail)) { $detail = ($_ | Out-String).Trim() }
         if ([string]::IsNullOrWhiteSpace($requestId)) { $requestId = [guid]::NewGuid().ToString() }
-        Write-WorkerResult -RequestId $requestId -Ok $false -Data $null -Error $detail
+        $errorInfo = Get-AutopilotGdapError -ErrorRecord $_
+        Write-WorkerResult -RequestId $requestId -Ok $false -Data $null -Error $errorInfo
     }
     finally {
         $workerContext.RequestId = ""

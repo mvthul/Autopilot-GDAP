@@ -34,8 +34,10 @@ privé.
 - De app gebruikt alleen delegated Graph-permissies; er zijn geen client secrets
   of app-only credentials.
 - GDAP- en PIM-rollen blijven leidend en worden niet door de tool gewijzigd.
-- Browser- en Partner Center-tokens blijven lokaal; de Partner Center-refresh-token
-  wordt per Windows-gebruiker met DPAPI beschermd.
+- De Tauri-app gebruikt op een gewone desktop Windows Web Account Manager (WAM)
+  en houdt tokens uitsluitend in de actieve workercontext. Er wordt geen eigen
+  Partner Center-refresh-tokenbestand aangemaakt; een oude DPAPI-cache wordt na
+  een succesvolle WAM-sessie verwijderd. Tijdens OOBE wordt browser-SSO gebruikt.
 - Releases zijn vooralsnog niet code-signed. Controleer daarom altijd de GitHub
   Release, tag en checksum vóór distributie.
 

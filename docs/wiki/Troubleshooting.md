@@ -5,8 +5,8 @@
 De Enterprise Application is nog niet in de klanttenant geautoriseerd. Laat een
 Global Administrator van de klanttenant de consentflow afronden. De Tauri-app
 toont hiervoor **Klant-app instellen**; de knop **Klantinstelling starten** opent
-de vaste tenant-specifieke Microsoft admin-consentpagina en geeft de vastgelopen
-browseraanmelding terug aan de app. Kies na acceptatie **Opnieuw verbinden**.
+de vaste tenant-specifieke Microsoft admin-consentpagina. Kies na acceptatie
+**Opnieuw verbinden**.
 
 ## `403 Forbidden` bij profielen of groepen
 
@@ -14,11 +14,31 @@ Controleer of de GDAP-relatie actief is en of het IT-Hulp-account de juiste
 PIM-activatie heeft: minimaal Intune Administrator en, voor groepen, Groups
 Administrator.
 
-## Browsercallback werkt niet
+## WAM meldt een ontbrekende GDAP-rolcontext
+
+Bij sommige GDAP-relaties geeft Windows Web Account Manager voor een klanttenant
+een B2B-gasttoken zonder directoryrolcontext (`wids`) terug. De app herkent dit
+vóór het laden van profielen en opent automatisch browser-SSO voor alleen die
+klant, met een login-hint voor hetzelfde IT-Hulp-account. Dit is geen device
+code-flow en de browser-token blijft alleen in het geheugen van de actieve
+appsessie. Na een succesvolle browseraanmelding toont het sessieoverzicht
+**Browser-SSO (GDAP)** als klantcontext.
+
+## WAM kan niet starten
+
+Op een normale Windows-desktop gebruikt de Tauri-app Windows Web Account Manager
+(WAM). Controleer dat de app in een interactieve Windows-sessie draait en voer
+`Setup-AutopilotApp.ps1` opnieuw uit als de broker redirect URI
+`ms-appx-web://Microsoft.AAD.BrokerPlugin/<CLIENT-ID>` ontbreekt. Kies
+**Wissel account** om alleen de appsessie te wissen; Windows-accounts worden
+niet afgemeld.
+
+## Browsercallback werkt niet tijdens OOBE
 
 Sluit andere toolinstanties en controleer of poort `8765` (Partner Center) of
-`8766` (Graph) niet door een ander proces wordt gebruikt. De tool gebruikt de
-systeembrowser en geen device code.
+`8766` (Graph) niet door een ander proces wordt gebruikt. Tijdens OOBE gebruikt
+de tool de systeembrowser en geen device code; buiten OOBE gebruikt de Tauri-app
+WAM voor de partner-sessie en zo nodig browser-SSO voor een GDAP-klantcontext.
 
 ## Tauri-app start niet in OOBE
 
