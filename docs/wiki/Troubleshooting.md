@@ -59,5 +59,7 @@ installatieprogramma nodig.
 ## Registratie lijkt mislukt na een succesvolle import
 
 Controleer de Autopilot-import en profilestatus in Intune. Bij dynamische groepen
-kan Entra tijd nodig hebben om de membership-regel opnieuw te evalueren; de tool
-voegt een apparaat nooit handmatig toe aan een dynamische groep.
+kan Entra tijd nodig hebben om de membership-regel opnieuw te evalueren. De tool
+voegt een apparaat nooit handmatig toe aan een dynamische groep, maar stelt bij
+een eenduidige `[OrderID]:tag`-regel wel automatisch de bijbehorende Group Tag
+in tijdens de Autopilot-import.

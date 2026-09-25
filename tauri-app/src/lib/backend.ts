@@ -65,12 +65,16 @@ const demoProfiles: Profile[] = [
         source: "Direct toegewezen statische groep",
       },
     ],
+    orderIdGroupTag: "OTWerkplekVM",
+    orderIdGroupTagStatus: "resolved",
+    orderIdGroupTagCandidates: ["OTWerkplekVM"],
   },
   {
     profileId: "demo-profile-2",
     displayName: "Standaard Autopilot-profiel zonder groep",
     groups: [],
     groupCandidates: [],
+    orderIdGroupTagStatus: "none",
   },
   {
     profileId: "demo-profile-3",
@@ -93,6 +97,7 @@ const demoProfiles: Profile[] = [
         source: "Direct toegewezen statische groep",
       },
     ],
+    orderIdGroupTagStatus: "none",
   },
   {
     profileId: "demo-profile-4",
@@ -110,6 +115,9 @@ const demoProfiles: Profile[] = [
       },
     ],
     groupCandidates: [],
+    orderIdGroupTag: "CT-Blue",
+    orderIdGroupTagStatus: "resolved",
+    orderIdGroupTagCandidates: ["CT-Blue"],
   },
 ];
 
@@ -176,6 +184,7 @@ export function getDemoResult(request: WorkerRequest): unknown {
       return {
         serialNumber: "DEMO-AP-0001",
         staticGroupName: staticGroup?.name,
+        orderIdGroupTag: profile?.orderIdGroupTag,
         dynamicGroups: profile?.groups.filter((group) => group.isDynamic) ?? [],
         importCompleted: true,
         assigned: true,

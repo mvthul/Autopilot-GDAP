@@ -16,7 +16,8 @@ klanttenant via GDAP, Microsoft Graph en Windows Autopilot.
 - De tool gebruikt alleen delegated toegang van het aangemelde IT-Hulp-account.
 - De app wijzigt geen GDAP- of PIM-rollen.
 - `-Online`, `-TenantId` en `-Assign` zijn verplicht voor een registratie.
-- Dynamische groepen worden nooit handmatig gemuteerd.
+- Dynamische groepen worden nooit handmatig gemuteerd. Een eenduidige
+  `[OrderID]:tag`-regel levert automatisch `-GroupTag tag` tijdens registratie.
 - `-AddToGroup` is uitsluitend toegestaan voor een unieke, geschikte statische
   security group.
 

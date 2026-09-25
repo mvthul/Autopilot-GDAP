@@ -1241,6 +1241,48 @@ function Get-ProfileGroupCandidates {
     return @($candidates | Group-Object id | ForEach-Object { $_.Group[0] } | Sort-Object displayName)
 }
 
+function Resolve-AutopilotOrderIdGroupTag {
+    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Groups)
+
+    # Intune represents the Autopilot Group Tag in devicePhysicalIds as
+    # [OrderID]:<tag>. Only infer a value when all applicable dynamic profile
+    # assignments point to one unique tag. A profile can contain unrelated
+    # dynamic rules, or conflicting tags, and guessing in either case would
+    # put a device in the wrong Entra group.
+    $tags = [System.Collections.Generic.List[string]]::new()
+    foreach ($group in @($Groups | Where-Object { $_.isDynamic -and -not $_.isExclusion })) {
+        $rule = [string]$group.membershipRule
+        if ([string]::IsNullOrWhiteSpace($rule)) { continue }
+        $matches = [regex]::Matches($rule, '(?i)\[OrderID\]\s*:\s*(?<tag>[^"\r\n]+)')
+        foreach ($match in $matches) {
+            $tag = [string]$match.Groups["tag"].Value.Trim()
+            if ([string]::IsNullOrWhiteSpace($tag)) { continue }
+            [void]$tags.Add($tag)
+        }
+    }
+
+    $uniqueTags = @($tags | Sort-Object -Unique)
+    if ($uniqueTags.Count -eq 1) {
+        return [pscustomobject]@{
+            status = "resolved"
+            groupTag = [string]$uniqueTags[0]
+            candidates = @($uniqueTags)
+        }
+    }
+    if ($uniqueTags.Count -gt 1) {
+        return [pscustomobject]@{
+            status = "ambiguous"
+            groupTag = $null
+            candidates = @($uniqueTags)
+        }
+    }
+    return [pscustomobject]@{
+        status = "none"
+        groupTag = $null
+        candidates = @()
+    }
+}
+
 function Get-CommunityScriptPath {
     param([Parameter(Mandatory = $true)][object]$State)
     $command = Get-Command Get-WindowsAutopilotInfoCommunity.ps1 -ErrorAction SilentlyContinue
@@ -1263,14 +1305,31 @@ function Write-CommunityRecord {
     param(
         [Parameter(Mandatory = $true)][object]$State,
         [Parameter(Mandatory = $true)][object]$Record,
-        [bool]$Verbose
+        [bool]$IncludeTechnicalOutput
     )
     $text = ($Record | Out-String).Trim()
     if ([string]::IsNullOrWhiteSpace($text)) { return }
     $technical = Test-TechnicalCommunityOutput -Text $text
-    if ($technical -and -not $Verbose) { return }
+    if ($technical -and -not $IncludeTechnicalOutput) { return }
     $level = if ($Record -is [System.Management.Automation.ErrorRecord]) { "error" } else { "info" }
     Write-EngineEvent -State $State -Message $text -Level $level -Technical $technical
+}
+
+function New-CommunityOnlineParameters {
+    param(
+        [Parameter(Mandatory = $true)][string]$TenantId,
+        [AllowNull()][object]$SelectedAddToGroup,
+        [string]$GroupTag,
+        [string]$Hostname,
+        [bool]$IncludeTechnicalOutput
+    )
+
+    $parameters = @{ Online = $true; TenantId = $TenantId; Assign = $true }
+    if ($IncludeTechnicalOutput) { $parameters.Verbose = $true }
+    if (-not [string]::IsNullOrWhiteSpace($Hostname)) { $parameters.AssignedComputerName = $Hostname.Trim() }
+    if ($SelectedAddToGroup) { $parameters.AddToGroup = [string]$SelectedAddToGroup.name }
+    if (-not [string]::IsNullOrWhiteSpace($GroupTag)) { $parameters.GroupTag = $GroupTag.Trim() }
+    return $parameters
 }
 
 function Invoke-CommunityOnline {
@@ -1279,8 +1338,9 @@ function Invoke-CommunityOnline {
         [Parameter(Mandatory = $true)][string]$TenantId,
         [Parameter(Mandatory = $true)][object]$Profile,
         [AllowNull()][object]$SelectedAddToGroup,
+        [string]$GroupTag,
         [string]$Hostname,
-        [bool]$Verbose
+        [bool]$IncludeTechnicalOutput
     )
     $context = Get-MgContext
     if (-not $context -or [string]$context.TenantId -ne [string]$TenantId) {
@@ -1310,25 +1370,34 @@ function Invoke-CommunityOnline {
     try {
         $communityCommand = Get-Command -Name $tempPath -ErrorAction Stop
         $requiredParameters = @("Online", "TenantId", "Assign")
+        if (-not [string]::IsNullOrWhiteSpace($GroupTag)) { $requiredParameters += "GroupTag" }
         $missingParameters = @($requiredParameters | Where-Object { -not $communityCommand.Parameters.ContainsKey($_) })
         if ($missingParameters.Count -gt 0) {
             throw "De actuele Community-scriptversie ondersteunt niet de vereiste parameter(s): $($missingParameters -join ', ')."
         }
-        $parameters = @{ Online = $true; TenantId = $TenantId; Assign = $true }
-        if ($Verbose) { $parameters.Verbose = $true }
-        if (-not [string]::IsNullOrWhiteSpace($Hostname)) { $parameters.AssignedComputerName = $Hostname.Trim() }
+        $parameters = New-CommunityOnlineParameters -TenantId $TenantId -SelectedAddToGroup $SelectedAddToGroup -GroupTag $GroupTag -Hostname $Hostname -IncludeTechnicalOutput $IncludeTechnicalOutput
         if ($SelectedAddToGroup) {
-            $parameters.AddToGroup = [string]$SelectedAddToGroup.name
             Write-EngineEvent -State $State -Message "Statische groepsactie: -AddToGroup '$($SelectedAddToGroup.name)'." -Level info
         }
+        if (-not [string]::IsNullOrWhiteSpace($GroupTag)) {
+            Write-EngineEvent -State $State -Message "Dynamische OrderID-regel: -GroupTag '$($parameters.GroupTag)' wordt automatisch aan het Community-script meegegeven." -Level info
+        }
         foreach ($group in @($Profile.groups | Where-Object { $_.isDynamic -and -not $_.isExclusion })) {
-            Write-EngineEvent -State $State -Message "Dynamische groep '$($group.name)': geen handmatige toevoeging. Entra beoordeelt de membership-regel automatisch." -Level info
+            if (-not [string]::IsNullOrWhiteSpace($GroupTag) -and [string]$group.membershipRule -match [regex]::Escape("[OrderID]:$($parameters.GroupTag)")) {
+                Write-EngineEvent -State $State -Message "Dynamische groep '$($group.name)': Group Tag '$($parameters.GroupTag)' wordt ingesteld; Entra beoordeelt de membership-regel automatisch." -Level info
+            }
+            else {
+                Write-EngineEvent -State $State -Message "Dynamische groep '$($group.name)': geen handmatige toevoeging. Entra beoordeelt de membership-regel automatisch." -Level info
+            }
         }
         $errors = [System.Collections.Generic.List[string]]::new()
-        Write-EngineEvent -State $State -Message "Community-script wordt gestart met -Online, -TenantId en -Assign." -Level info -Step register
+        $parameterSummary = @("-Online", "-TenantId", "-Assign")
+        if ($parameters.ContainsKey("GroupTag")) { $parameterSummary += "-GroupTag" }
+        if ($parameters.ContainsKey("AddToGroup")) { $parameterSummary += "-AddToGroup" }
+        Write-EngineEvent -State $State -Message "Community-script wordt gestart met $($parameterSummary -join ', ')." -Level info -Step register
         & $tempPath @parameters *>&1 | ForEach-Object {
             if ($_ -is [System.Management.Automation.ErrorRecord]) { [void]$errors.Add(($_ | Out-String).Trim()) }
-            Write-CommunityRecord -State $State -Record $_ -Verbose $Verbose
+            Write-CommunityRecord -State $State -Record $_ -IncludeTechnicalOutput $IncludeTechnicalOutput
         }
         if ($errors.Count -gt 0) { throw ($errors -join "`n") }
     }
@@ -1457,6 +1526,7 @@ function Get-AutopilotProfilesForCurrentTenant {
     foreach ($profile in @($response.value)) {
         $groups = @(Get-ProfileAssignments -Profile $profile)
         $candidates = if ($groups.Count -gt 0) { @(Get-ProfileGroupCandidates -State $State -Groups $groups) } else { @() }
+        $groupTagResolution = Resolve-AutopilotOrderIdGroupTag -Groups $groups
         [void]$profiles.Add([pscustomobject]@{
             profileId = [string]$profile.id
             displayName = [string]$profile.displayName
@@ -1468,6 +1538,9 @@ function Get-AutopilotProfilesForCurrentTenant {
                 }
             })
             groupCandidates = @($candidates)
+            orderIdGroupTag = [string]$groupTagResolution.groupTag
+            orderIdGroupTagStatus = [string]$groupTagResolution.status
+            orderIdGroupTagCandidates = @($groupTagResolution.candidates)
         })
     }
     return $profiles.ToArray()
@@ -1536,7 +1609,7 @@ function Invoke-RegisterDevice {
         [Parameter(Mandatory = $true)][string]$ProfileId,
         [string]$StaticGroupId,
         [string]$Hostname,
-        [bool]$Verbose
+        [bool]$IncludeTechnicalOutput
     )
     $profile = @($State.Profiles | Where-Object { $_.profileId -eq $ProfileId } | Select-Object -First 1)
     if ($profile.Count -ne 1) { throw "Het gekozen profiel is niet meer actief in deze sessie. Laad de profielen opnieuw." }
@@ -1555,7 +1628,15 @@ function Invoke-RegisterDevice {
     $serial = [string](Get-CimInstance -ClassName Win32_BIOS -ErrorAction Stop).SerialNumber
     Write-EngineEvent -State $State -Message "Hardwaregegevens verzameld voor serienummer $serial." -Level info -Step register
     $State.RegistrationCompleted = $false
-    Invoke-CommunityOnline -State $State -TenantId $State.TargetTenantId -Profile $profile[0] -SelectedAddToGroup $selectedGroup -Hostname $Hostname -Verbose $Verbose
+    $groupTagResolution = Resolve-AutopilotOrderIdGroupTag -Groups @($profile[0].groups)
+    $groupTag = [string]$groupTagResolution.groupTag
+    if ([string]$groupTagResolution.status -eq "ambiguous") {
+        Write-EngineEvent -State $State -Message "Meerdere verschillende dynamische OrderID-tags gevonden ($($groupTagResolution.candidates -join ', ')). Er wordt uit veiligheid geen -GroupTag meegegeven." -Level warning
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($groupTag)) {
+        Write-EngineEvent -State $State -Message "Dynamische OrderID-tag '$groupTag' wordt tijdens registratie automatisch ingesteld." -Level info
+    }
+    Invoke-CommunityOnline -State $State -TenantId $State.TargetTenantId -Profile $profile[0] -SelectedAddToGroup $selectedGroup -GroupTag $groupTag -Hostname $Hostname -IncludeTechnicalOutput $IncludeTechnicalOutput
     $dynamicGroups = @($profile[0].groups | Where-Object { $_.isDynamic -and -not $_.isExclusion })
     foreach ($group in $dynamicGroups) {
         Write-EngineEvent -State $State -Message "Dynamische groep '$($group.name)' wordt door Entra verwerkt; dit kan enige tijd duren." -Level info
@@ -1564,6 +1645,7 @@ function Invoke-RegisterDevice {
     [pscustomobject]@{
         serialNumber = $serial
         staticGroupName = if ($selectedGroup) { [string]$selectedGroup.name } else { $null }
+        orderIdGroupTag = if ([string]::IsNullOrWhiteSpace($groupTag)) { $null } else { $groupTag }
         dynamicGroups = @($dynamicGroups)
         importCompleted = $true
         assigned = $true

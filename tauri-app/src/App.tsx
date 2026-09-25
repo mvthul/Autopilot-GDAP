@@ -85,6 +85,18 @@ function getGroupDecision(profile: Profile | undefined, selectedCandidate?: Grou
   return `Na import wordt “${selectedCandidate.name}” als statische groepsactie uitgevoerd.`;
 }
 
+function getOrderIdGroupTagDecision(profile: Profile | undefined) {
+  if (!profile) return null;
+  if (profile.orderIdGroupTag) {
+    return `Dynamische OrderID-regel herkend: Group Tag “${profile.orderIdGroupTag}” wordt tijdens registratie automatisch ingesteld.`;
+  }
+  if (profile.orderIdGroupTagStatus === "ambiguous") {
+    const tags = profile.orderIdGroupTagCandidates?.join(", ") || "onbekend";
+    return `Meerdere verschillende OrderID-tags gevonden (${tags}). Er wordt uit veiligheid geen Group Tag automatisch ingesteld.`;
+  }
+  return null;
+}
+
 export function App() {
   const [step, setStep] = useState<WorkflowStep>("login");
   const [preflight, setPreflight] = useState<PreflightResult | null>(null);
@@ -620,6 +632,7 @@ export function App() {
                       </div>
                     )}
                     <p className="group-decision">{getGroupDecision(selectedProfile, selectedCandidate)}</p>
+                    {getOrderIdGroupTagDecision(selectedProfile) && <p className="group-decision">{getOrderIdGroupTagDecision(selectedProfile)}</p>}
                   </div>
                 )}
 
@@ -667,6 +680,7 @@ export function App() {
                 </div>
 
                 {registration?.staticGroupName && <div className="result-row"><Check size={18} /><span>Toegevoegd aan statische groep <strong>{registration.staticGroupName}</strong></span></div>}
+                {registration?.orderIdGroupTag && <div className="result-row neutral"><ShieldCheck size={18} /><span>Group Tag <strong>{registration.orderIdGroupTag}</strong> is ingesteld voor de dynamische Entra-regel.</span></div>}
                 {(registration?.dynamicGroups ?? []).map((group) => <div className="result-row neutral" key={group.id}><ShieldCheck size={18} /><span><strong>{group.name}</strong> wordt automatisch door Entra beoordeeld.</span></div>)}
 
                 {step === "complete" && (
@@ -690,6 +704,7 @@ export function App() {
                 <div><dt>Klantcontext</dt><dd>{customerAuthMode === "browserSsoFallback" ? "Browser-SSO (GDAP)" : customerAuthMode === "browserOobe" ? "OOBE-browser" : customerAuthMode === "wam" ? "Windows WAM" : "Nog niet geopend"}</dd></div>
                 <div><dt>Profiel</dt><dd>{selectedProfile?.displayName ?? "Nog niet gekozen"}</dd></div>
                 <div><dt>Groep</dt><dd>{selectedCandidate?.name ?? (selectedProfile?.groupCandidates.length === 0 ? "Automatisch" : "Nog niet gekozen")}</dd></div>
+                {selectedProfile && <div><dt>Group Tag</dt><dd>{selectedProfile.orderIdGroupTag ?? (selectedProfile.orderIdGroupTagStatus === "ambiguous" ? "Meerdere tags; niet automatisch ingesteld" : "Niet van toepassing")}</dd></div>}
                 <div><dt>Hostname</dt><dd>{hostname || "Automatisch"}</dd></div>
               </dl>
               {sessionAccount && (

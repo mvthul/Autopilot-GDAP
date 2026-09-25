@@ -50,6 +50,36 @@ $errorBrowserRequestIsCallback = & $module {
 }
 Assert-True -Condition ([bool]$errorBrowserRequestIsCallback) -Name "Een OAuth-fout wordt als callback herkend"
 
+$resolvedOrderIdTag = & $module {
+    Resolve-AutopilotOrderIdGroupTag -Groups @(
+        [pscustomobject]@{ isDynamic = $true; isExclusion = $false; membershipRule = '(device.devicePhysicalIds -any (_ -eq "[OrderID]:JHZH"))' },
+        [pscustomobject]@{ isDynamic = $true; isExclusion = $false; membershipRule = '(device.devicePhysicalIds -any _ -eq "[OrderID]:JHZH")' },
+        [pscustomobject]@{ isDynamic = $false; isExclusion = $false; membershipRule = $null }
+    )
+}
+Assert-Equal -Actual $resolvedOrderIdTag.status -Expected "resolved" -Name "Een eenduidige dynamische OrderID-regel wordt herkend"
+Assert-Equal -Actual $resolvedOrderIdTag.groupTag -Expected "JHZH" -Name "De Group Tag wordt uit de dynamische regel gehaald"
+
+$ambiguousOrderIdTag = & $module {
+    Resolve-AutopilotOrderIdGroupTag -Groups @(
+        [pscustomobject]@{ isDynamic = $true; isExclusion = $false; membershipRule = '(device.devicePhysicalIds -any _ -eq "[OrderID]:Blue")' },
+        [pscustomobject]@{ isDynamic = $true; isExclusion = $false; membershipRule = '(device.devicePhysicalIds -any _ -eq "[OrderID]:Red")' },
+        [pscustomobject]@{ isDynamic = $true; isExclusion = $true; membershipRule = '(device.devicePhysicalIds -any _ -eq "[OrderID]:Ignored")' }
+    )
+}
+Assert-Equal -Actual $ambiguousOrderIdTag.status -Expected "ambiguous" -Name "Tegenstrijdige dynamische OrderID-tags worden niet gegokt"
+Assert-True -Condition ([string]::IsNullOrEmpty([string]$ambiguousOrderIdTag.groupTag)) -Name "Een dubbelzinnige OrderID-regel levert geen Group Tag op"
+$noOrderIdTag = & $module { Resolve-AutopilotOrderIdGroupTag -Groups @() }
+Assert-Equal -Actual $noOrderIdTag.status -Expected "none" -Name "Een profiel zonder OrderID-regel krijgt geen Group Tag"
+
+$communityParameters = & $module {
+    New-CommunityOnlineParameters -TenantId "00000000-0000-0000-0000-000000000001" -SelectedAddToGroup ([pscustomobject]@{ name = "Statische-groep" }) -GroupTag "JHZH" -Hostname "CT-LAP-001" -IncludeTechnicalOutput $true
+}
+Assert-Equal -Actual $communityParameters["GroupTag"] -Expected "JHZH" -Name "De afgeleide OrderID-tag wordt als GroupTag gesplat"
+Assert-Equal -Actual $communityParameters["AddToGroup"] -Expected "Statische-groep" -Name "De statische groepsactie blijft een aparte AddToGroup-splat"
+Assert-Equal -Actual $communityParameters["AssignedComputerName"] -Expected "CT-LAP-001" -Name "GroupTag behoudt de optionele apparaatnaam"
+Assert-True -Condition ([bool]$communityParameters["Verbose"]) -Name "De technische-loginstelling blijft aan het Community-script gekoppeld"
+
 $scopes = @(& $module { ConvertTo-MsalScopes -Scopes @("Directory.Read.All", "https://api.partnercenter.microsoft.com/user_impersonation") })
 Assert-True -Condition ($scopes -contains "Directory.Read.All") -Name "Graph-scope blijft een canonieke delegated scope voor WAM"
 Assert-True -Condition ($scopes -notcontains "https://graph.microsoft.com/Directory.Read.All") -Name "WAM vraagt geen URL-audience Graph-scope aan"
@@ -72,6 +102,9 @@ Assert-True -Condition ($engineText -match 'customerCount = \[int\]\$State\.Cust
 Assert-True -Condition ($engineText -match '\$context\.Response\.StatusCode = 204') -Name "Niet-OAuth localhost-verzoeken worden afgehandeld zonder de listener te sluiten"
 Assert-True -Condition ($engineText -match '\[bool\]\$State\.IsOobe -and \[bool\]\$State\.BrowserInteractiveCompleted') -Name "OOBE gebruikt na de eerste login één gewone browser-SSO-flow per klanttenant"
 Assert-True -Condition ($engineText -match '@\("default"\)') -Name "OOBE stuurt geen prompt=none gevolgd door een tweede callback"
+Assert-True -Condition ($engineText -match 'function Resolve-AutopilotOrderIdGroupTag') -Name "Dynamische OrderID-regels worden veilig geanalyseerd"
+Assert-True -Condition ($engineText -match '\$parameters\.GroupTag = \$GroupTag\.Trim\(\)') -Name "Een eenduidige OrderID-tag wordt als GroupTag aan het Community-script doorgegeven"
+Assert-True -Condition ($engineText -match 'if \(\$parameters\.ContainsKey\("AddToGroup"\)\)') -Name "AddToGroup blijft een afzonderlijke statische groepsactie"
 
 $customerCachePath = Join-Path ([IO.Path]::GetTempPath()) ("autopilot-gdap-customers-{0}.ndjson" -f ([guid]::NewGuid()))
 $chunkState = [pscustomobject]@{

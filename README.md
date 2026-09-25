@@ -118,6 +118,13 @@ Praktisch betekent dit:
 3. Wanneer die group PIM-managed is, moet de technicus de juiste PIM-activatie vóór stap 2 van de tool uitvoeren.
 4. Voor een profiel zonder statische groepsactie is alleen **Intune Administrator** nodig; voor een dynamische groep wordt nooit handmatig membership gewijzigd.
 
+Wanneer een niet-uitgesloten dynamische profielgroep eenduidig een regel als
+`(device.devicePhysicalIds -any _ -eq "[OrderID]:JHZH")` bevat, herkent de app
+automatisch de Group Tag (`JHZH`) en geeft zij `-GroupTag JHZH` door aan
+`Get-WindowsAutopilotInfoCommunity`. Entra blijft daarna zelf verantwoordelijk
+voor de dynamische membership. Bij meerdere verschillende OrderID-tags kiest de
+app uit veiligheid geen tag.
+
 Groepen die niet door Groups Administrator beheerd kunnen worden (bijvoorbeeld role-assignable groups, of groepen waarvoor klantbeleid aanvullende beperkingen oplegt) worden niet automatisch aangepast. Gebruik hiervoor een expliciet geautoriseerde beheerdersroute.
 
 ## Gebruik tijdens Windows Setup (OOBE)
@@ -154,7 +161,7 @@ irm "https://raw.githubusercontent.com/mvthul/Autopilot-GDAP/refs/heads/master/G
 4. Selecteer de klanttenant en verbind met de klantcontext.
 5. Geef klantconsent wanneer de tool daarom vraagt.
 6. Selecteer het Autopilot-profiel en registreer het apparaat. De tool geeft altijd `-Online`, `-TenantId` en `-Assign` door aan de Community-scriptflow.
-7. Statische profielgroepen worden via `-AddToGroup` verwerkt; dynamische groepen worden alleen gecontroleerd en nooit handmatig gemuteerd.
+7. Statische profielgroepen worden via `-AddToGroup` verwerkt. Voor een eenduidige dynamische `[OrderID]:tag`-regel geeft de app automatisch `-GroupTag` door; dynamische membership wordt nooit handmatig gemuteerd.
 8. De herstartknop wordt pas actief na succesvolle import, assignment en een eventuele statische groepsactie.
 
 ## Beveiliging

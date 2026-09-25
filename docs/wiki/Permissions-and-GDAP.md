@@ -29,5 +29,8 @@ vereiste PIM-activatie vóór het openen van de klanttenant activeren.
 
 - Geen assignment: geen handmatige groepsactie.
 - Dynamische group: geen `-AddToGroup`; Entra verwerkt de membership-regel.
+  Bij precies één `[OrderID]:tag` in de toegewezen dynamische regels geeft de
+  app automatisch `-GroupTag tag` aan het Community-script mee. Bij meerdere
+  tags wordt niets automatisch gekozen.
 - Statische security group: alleen een unieke kandidaat mag worden gekozen.
 - Meerdere geldige statische kandidaten: de technicus kiest expliciet één groep.

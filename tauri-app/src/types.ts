@@ -54,6 +54,10 @@ export interface Profile {
   displayName: string;
   groups: GroupInfo[];
   groupCandidates: GroupCandidate[];
+  /** A unique [OrderID]:tag inferred from assigned dynamic Entra groups. */
+  orderIdGroupTag?: string;
+  orderIdGroupTagStatus?: "none" | "resolved" | "ambiguous";
+  orderIdGroupTagCandidates?: string[];
 }
 
 export interface PreflightResult {
@@ -86,6 +90,7 @@ export interface CustomerConnectionResult {
 export interface RegisterResult {
   serialNumber: string;
   staticGroupName?: string;
+  orderIdGroupTag?: string;
   dynamicGroups: GroupInfo[];
   importCompleted: boolean;
   assigned: boolean;

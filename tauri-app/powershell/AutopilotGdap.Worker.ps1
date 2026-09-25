@@ -144,7 +144,7 @@ while ($true) {
                     -ProfileId $profileId `
                     -StaticGroupId ([string](Get-RequestValue -Payload $payload -Name "staticGroupId")) `
                     -Hostname ([string](Get-RequestValue -Payload $payload -Name "hostname")) `
-                    -Verbose ([bool](Get-RequestValue -Payload $payload -Name "verbose"))
+                    -IncludeTechnicalOutput ([bool](Get-RequestValue -Payload $payload -Name "verbose"))
             }
             "restartDevice" {
                 $data = Invoke-AppRestart -State $state
