@@ -4,6 +4,7 @@
 - [OOBE](OOBE)
 - [Rechten en GDAP](Permissions-and-GDAP)
 - [Installatie en releases](Installation-and-releases)
+- [Tijdelijke MDE-allow v0.1.4](Temporary-MDE-Allow-v0.1.4)
 - [Troubleshooting](Troubleshooting)
 
 ---

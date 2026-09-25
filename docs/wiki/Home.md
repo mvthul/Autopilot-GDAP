@@ -8,7 +8,9 @@ klanttenant via GDAP, Microsoft Graph en Windows Autopilot.
 1. Controleer de [GDAP- en PIM-rechten](Permissions-and-GDAP).
 2. Doe de eenmalige [app-inrichting](Installation-and-releases).
 3. Gebruik in OOBE de [Tauri-app of WPF-fallback](OOBE).
-4. Raadpleeg de [troubleshootingstappen](Troubleshooting) bij consent-, Graph-
+4. Configureer voor CaptureTech-beheerde apparaten indien nodig de tijdelijke
+   [MDE-allow voor v0.1.4](Temporary-MDE-Allow-v0.1.4).
+5. Raadpleeg de [troubleshootingstappen](Troubleshooting) bij consent-, Graph-
    of groepsfouten.
 
 ## Belangrijke uitgangspunten
