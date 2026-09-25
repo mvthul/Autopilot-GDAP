@@ -181,6 +181,34 @@ function Test-GraphAuthorizationFailure {
     return [bool](($details -join " | ") -match '(?i)(\b401\b|\b403\b|Unauthorized|Forbidden|InvalidAuthenticationToken|Authorization_RequestDenied)')
 }
 
+function Test-WamCustomerBrowserFallbackRequired {
+    param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+    # The partner WAM session can be healthy while tenant-specific WAM token
+    # acquisition fails inside the broker. In particular, WAM error 0xCAA20003
+    # (decimal 3399614467) has been observed for GDAP B2B customer contexts.
+    # This is distinct from a missing broker/runtime and is safe to route to
+    # the targeted browser SSO flow for the selected customer only.
+    $details = [System.Collections.Generic.List[string]]::new()
+    $exception = $ErrorRecord.Exception
+    while ($exception) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$exception.GetType().FullName)) {
+            [void]$details.Add([string]$exception.GetType().FullName)
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$exception.Message)) {
+            [void]$details.Add([string]$exception.Message)
+        }
+        $exception = $exception.InnerException
+    }
+    try {
+        $rendered = ($ErrorRecord | Out-String).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($rendered)) { [void]$details.Add($rendered) }
+    }
+    catch { }
+    $text = $details -join " | "
+    return [bool]($text -match '(?i)WAM Error Error Code:\s*(3399614467|0xCAA20003)|WAM Error.*Internal Error Code')
+}
+
 function Get-GraphResponseDiagnostic {
     param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
 
@@ -879,7 +907,8 @@ function Invoke-BrowserCustomerGraphFallback {
     param(
         [Parameter(Mandatory = $true)][object]$State,
         [Parameter(Mandatory = $true)][string]$TenantId,
-        [Parameter(Mandatory = $true)][string]$CustomerName
+        [Parameter(Mandatory = $true)][string]$CustomerName,
+        [ValidateSet("missingRoleContext", "tokenAcquisition")][string]$Reason = "missingRoleContext"
     )
 
     if ($State.AuthMode -ne "wam") {
@@ -891,7 +920,13 @@ function Invoke-BrowserCustomerGraphFallback {
     # resulting token has no customer directory-role (`wids`) context. The
     # established auth-code browser flow obtains the role-bearing token for
     # that one customer without device code or persistent refresh tokens.
-    Write-EngineEvent -State $State -Message "Windows WAM heeft voor $CustomerName geen GDAP-rolcontext ontvangen. De browser opent voor SSO met hetzelfde IT-Hulp-account." -Level info -Step customer
+    $fallbackMessage = if ($Reason -eq "tokenAcquisition") {
+        "Windows WAM kon voor $CustomerName geen bruikbare klanttenanttoken ophalen. De browser opent voor SSO met hetzelfde IT-Hulp-account."
+    }
+    else {
+        "Windows WAM heeft voor $CustomerName geen GDAP-rolcontext ontvangen. De browser opent voor SSO met hetzelfde IT-Hulp-account."
+    }
+    Write-EngineEvent -State $State -Message $fallbackMessage -Level info -Step customer
     Connect-GraphTenant -State $State -TenantId $TenantId -Scopes $script:GraphScopes -BrowserSso
     $State.CustomerAuthMode = "browserSsoFallback"
 
@@ -1310,8 +1345,19 @@ function Invoke-ConnectCustomer {
     )
     $customer = @($State.Customers | Where-Object { $_.tenantId -eq $TenantId } | Select-Object -First 1)
     if ($customer.Count -ne 1) { throw "De gekozen klanttenant komt niet uit de actieve Partner Center-klantenlijst." }
-    Connect-GraphTenant -State $State -TenantId $TenantId -Scopes $script:GraphScopes
-    if ($State.AuthMode -eq "wam") {
+    $State.CustomerAuthMode = ""
+    try {
+        Connect-GraphTenant -State $State -TenantId $TenantId -Scopes $script:GraphScopes
+    }
+    catch {
+        if ($State.AuthMode -eq "wam" -and (Test-WamCustomerBrowserFallbackRequired -ErrorRecord $_)) {
+            Invoke-BrowserCustomerGraphFallback -State $State -TenantId $TenantId -CustomerName ([string]$customer[0].customerName) -Reason tokenAcquisition
+        }
+        else {
+            throw
+        }
+    }
+    if ($State.AuthMode -eq "wam" -and $State.CustomerAuthMode -ne "browserSsoFallback") {
         if (Test-GraphTokenHasDirectoryRoleContext -AccessToken ([string]$State.GraphAccessToken)) {
             $State.CustomerAuthMode = "wam"
         }
@@ -1412,7 +1458,17 @@ function Invoke-LoadProfiles {
             }
             $refreshedCustomerToken = $true
             Write-EngineEvent -State $State -Message "Microsoft Graph accepteert het stille GDAP-token niet. Windows ververst nu één keer de klanttenantaanmelding voor hetzelfde IT-Hulp-account." -Level info -Step customer
-            Connect-GraphTenant -State $State -TenantId $State.TargetTenantId -Scopes $script:GraphScopes -Interactive -ForceCustomerAccountSelection
+            try {
+                Connect-GraphTenant -State $State -TenantId $State.TargetTenantId -Scopes $script:GraphScopes -Interactive -ForceCustomerAccountSelection
+            }
+            catch {
+                if ($State.AuthMode -eq "wam" -and (Test-WamCustomerBrowserFallbackRequired -ErrorRecord $_)) {
+                    Invoke-BrowserCustomerGraphFallback -State $State -TenantId $State.TargetTenantId -CustomerName "de geselecteerde klant" -Reason tokenAcquisition
+                }
+                else {
+                    throw
+                }
+            }
             if (-not (Test-GraphTokenHasDirectoryRoleContext -AccessToken ([string]$State.GraphAccessToken))) {
                 Invoke-BrowserCustomerGraphFallback -State $State -TenantId $State.TargetTenantId -CustomerName "de geselecteerde klant"
             }

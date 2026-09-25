@@ -118,9 +118,23 @@ $isGraphAuthorizationFailure = & $module {
     Test-GraphAuthorizationFailure -ErrorRecord $record
 } $unauthorizedErrorRecord
 Assert-True -Condition $isGraphAuthorizationFailure -Name "401 activeert een eenmalige klanttenant-tokenverversing"
+$wamCustomerBrokerErrorRecord = New-TestErrorRecord -Message "Exception calling 'Acquire' with '6' argument(s): 'WAM Error Error Code: 3399614467 Error Message: (pii) Internal Error Code: 558133256'"
+$requiresCustomerBrowserFallback = & $module {
+    param($record)
+    Test-WamCustomerBrowserFallbackRequired -ErrorRecord $record
+} $wamCustomerBrokerErrorRecord
+Assert-True -Condition $requiresCustomerBrowserFallback -Name "Een tenant-specifieke WAM-brokerfout activeert browser-SSO voor de klant"
+$wamRuntimeErrorRecord = New-TestErrorRecord -Message "System.Windows.Forms is not referenced"
+$requiresCustomerBrowserFallbackForRuntimeError = & $module {
+    param($record)
+    Test-WamCustomerBrowserFallbackRequired -ErrorRecord $record
+} $wamRuntimeErrorRecord
+Assert-True -Condition (-not $requiresCustomerBrowserFallbackForRuntimeError) -Name "Een ontbrekende WAM-runtime wordt niet als klantbrowserfallback behandeld"
 Assert-True -Condition ($engineText -match 'function Get-AutopilotProfilesForCurrentTenant') -Name "Profielen kunnen na een tokenverversing opnieuw worden opgehaald"
 Assert-True -Condition ($engineText -match 'function Invoke-BrowserCustomerGraphFallback') -Name "WAM kan gericht naar browser-SSO voor een GDAP-klant terugvallen"
 Assert-True -Condition ($engineText -match 'Windows WAM heeft voor .* geen GDAP-rolcontext ontvangen') -Name "De browserfallback meldt duidelijk waarom deze nodig is"
+Assert-True -Condition ($engineText -match 'WAM kon voor .* geen bruikbare klanttenanttoken ophalen') -Name "Een WAM-brokerfout krijgt een klantgerichte browser-SSO-melding"
+Assert-True -Condition ($engineText -match 'Test-WamCustomerBrowserFallbackRequired') -Name "Klanttenant-WAM-brokerfouten worden vóór een foutmelding onderschept"
 Assert-True -Condition ($engineText -match 'BrowserSso') -Name "De browserfallback kan WAM uitsluitend voor de klantcontext omzeilen"
 Assert-True -Condition ($engineText -match 'Connect-GraphTenant -State \$State -TenantId \$State\.TargetTenantId -Scopes \$script:GraphScopes -Interactive -ForceCustomerAccountSelection') -Name "WAM vraagt alleen bij een afgewezen token klanttenantbevestiging"
 Assert-True -Condition ($engineText -match 'request = request\.WithTenantId\(tenantId\);') -Name "De WAM-klanttenantbevestiging vraagt altijd een tenantgebonden token"

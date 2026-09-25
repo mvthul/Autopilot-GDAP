@@ -17,7 +17,8 @@ Administrator.
 ## WAM meldt een ontbrekende GDAP-rolcontext
 
 Bij sommige GDAP-relaties geeft Windows Web Account Manager voor een klanttenant
-een B2B-gasttoken zonder directoryrolcontext (`wids`) terug. De app herkent dit
+een B2B-gasttoken zonder directoryrolcontext (`wids`) terug, of faalt de
+tenant-specifieke brokeroproep met een WAM-fout. De app herkent beide gevallen
 vóór het laden van profielen en opent automatisch browser-SSO voor alleen die
 klant, met een login-hint voor hetzelfde IT-Hulp-account. Dit is geen device
 code-flow en de browser-token blijft alleen in het geheugen van de actieve
