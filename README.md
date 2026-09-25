@@ -135,7 +135,7 @@ irm "https://github.com/mvthul/Autopilot-GDAP/releases/latest/download/capturete
 Start-Process -FilePath $exe
 ```
 
-Tijdens OOBE opent de app de normale browser-SSO-aanmelding voor Graph en Partner Center; WAM is daar niet beschikbaar en device code wordt niet gebruikt. Selecteer vervolgens de klant, het profiel en — uitsluitend wanneer nodig — een veilige statische groep.
+Tijdens OOBE opent de app de normale browser-SSO-aanmelding voor Graph en Partner Center; WAM is daar niet beschikbaar en device code wordt niet gebruikt. De bestaande browsersessie wordt voor een klanttenant in één reguliere SSO-flow hergebruikt. Extra lokale browserverzoeken, zoals een favicon, worden genegeerd zodat de callback op `localhost` beschikbaar blijft voor de echte Microsoft-aanmelding. Selecteer vervolgens de klant, het profiel en — uitsluitend wanneer nodig — een veilige statische groep.
 
 ### Optie B — PowerShell/WPF fallback
 

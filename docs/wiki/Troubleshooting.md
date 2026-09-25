@@ -40,6 +40,9 @@ Sluit andere toolinstanties en controleer of poort `8765` (Partner Center) of
 `8766` (Graph) niet door een ander proces wordt gebruikt. Tijdens OOBE gebruikt
 de tool de systeembrowser en geen device code; buiten OOBE gebruikt de Tauri-app
 WAM voor de partner-sessie en zo nodig browser-SSO voor een GDAP-klantcontext.
+De app houdt de callbacklistener open wanneer Edge eerst een extra lokaal verzoek
+zoals een favicon doet. Verschijnt alsnog `ERR_CONNECTION_REFUSED` op een
+`localhost`-callback, sluit dan oude toolinstanties en start de app opnieuw.
 
 ## Tauri-app start niet in OOBE
 

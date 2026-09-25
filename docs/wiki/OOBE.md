@@ -12,7 +12,8 @@ Start-Process -FilePath $exe
 
 De portable app heeft Windows 10/11 x64, PowerShell 5.1+ en WebView2 Evergreen
 nodig. Meld aan in de browser met het IT-Hulp-account; device code en WAM worden
-niet gebruikt. De EXE bevat een administrator-manifest. Verschijnt de
+niet gebruikt. Voor een klanttenant hergebruikt de browser dezelfde SSO-sessie
+in één flow. De EXE bevat een administrator-manifest. Verschijnt de
 administratorwaarschuwing toch in de app, kies dan **Start opnieuw als
 administrator**; Windows opent vervolgens de normale UAC-bevestiging.
 

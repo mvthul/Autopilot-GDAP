@@ -37,6 +37,19 @@ $desktopMode = & $module { Resolve-AuthenticationMode -IsOobe $false }
 Assert-Equal -Actual $oobeMode -Expected "browserOobe" -Name "OOBE gebruikt browser-SSO"
 Assert-Equal -Actual $desktopMode -Expected "wam" -Name "Desktop gebruikt WAM"
 
+$emptyBrowserRequestIsCallback = & $module {
+    Test-BrowserAuthorizationCallback -Code "" -Error "" -ErrorDescription ""
+}
+Assert-True -Condition (-not [bool]$emptyBrowserRequestIsCallback) -Name "Een browserresource zonder OAuth-resultaat verbruikt de callback niet"
+$codeBrowserRequestIsCallback = & $module {
+    Test-BrowserAuthorizationCallback -Code "authorization-code" -Error "" -ErrorDescription ""
+}
+Assert-True -Condition ([bool]$codeBrowserRequestIsCallback) -Name "Een OAuth-code wordt als callback herkend"
+$errorBrowserRequestIsCallback = & $module {
+    Test-BrowserAuthorizationCallback -Code "" -Error "login_required" -ErrorDescription ""
+}
+Assert-True -Condition ([bool]$errorBrowserRequestIsCallback) -Name "Een OAuth-fout wordt als callback herkend"
+
 $scopes = @(& $module { ConvertTo-MsalScopes -Scopes @("Directory.Read.All", "https://api.partnercenter.microsoft.com/user_impersonation") })
 Assert-True -Condition ($scopes -contains "Directory.Read.All") -Name "Graph-scope blijft een canonieke delegated scope voor WAM"
 Assert-True -Condition ($scopes -notcontains "https://graph.microsoft.com/Directory.Read.All") -Name "WAM vraagt geen URL-audience Graph-scope aan"
@@ -56,6 +69,9 @@ Assert-True -Condition ($engineText -match '\$State\.Customers = @\(Get-PartnerC
 Assert-True -Condition ($engineText -match '\[void\]\(Ensure-GraphAuthenticationModule -State \$State\)') -Name "Graph-modulemetadata lekt niet naar workflowresultaten"
 Assert-True -Condition ($engineText -match 'function Write-PartnerCenterCustomerCache') -Name "Partner Center-klanten worden via een tijdelijke cache overgedragen"
 Assert-True -Condition ($engineText -match 'customerCount = \[int\]\$State\.Customers\.Count') -Name "Partnerlogin geeft een compact eindresultaat terug"
+Assert-True -Condition ($engineText -match '\$context\.Response\.StatusCode = 204') -Name "Niet-OAuth localhost-verzoeken worden afgehandeld zonder de listener te sluiten"
+Assert-True -Condition ($engineText -match '\[bool\]\$State\.IsOobe -and \[bool\]\$State\.BrowserInteractiveCompleted') -Name "OOBE gebruikt na de eerste login één gewone browser-SSO-flow per klanttenant"
+Assert-True -Condition ($engineText -match '@\("default"\)') -Name "OOBE stuurt geen prompt=none gevolgd door een tweede callback"
 
 $customerCachePath = Join-Path ([IO.Path]::GetTempPath()) ("autopilot-gdap-customers-{0}.ndjson" -f ([guid]::NewGuid()))
 $chunkState = [pscustomobject]@{

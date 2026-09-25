@@ -430,6 +430,24 @@ function Retire-LegacyPartnerCenterToken {
     }
 }
 
+function Test-BrowserAuthorizationCallback {
+    param(
+        [AllowEmptyString()][string]$Code,
+        [AllowEmptyString()][string]$Error,
+        [AllowEmptyString()][string]$ErrorDescription
+    )
+
+    # HttpListener receives every request below the localhost prefix. Edge can
+    # ask for a favicon or another browser resource before the actual OAuth
+    # redirect arrives. Such a request must never consume the one callback
+    # listener that is waiting for the authorization result.
+    return (
+        -not [string]::IsNullOrWhiteSpace($Code) -or
+        -not [string]::IsNullOrWhiteSpace($Error) -or
+        -not [string]::IsNullOrWhiteSpace($ErrorDescription)
+    )
+}
+
 function Invoke-BrowserAuthorizationCodeFlow {
     param(
         [Parameter(Mandatory = $true)][object]$State,
@@ -460,36 +478,57 @@ function Invoke-BrowserAuthorizationCodeFlow {
     try {
         Write-EngineEvent -State $State -Message "$Purpose opent in je standaardbrowser. Meld aan met je IT-Hulp-account." -Level info
         Start-Process $AuthorizeUri -ErrorAction Stop
-        $result = $listener.BeginGetContext($null, $null)
         $timeoutAt = [DateTime]::UtcNow.AddMinutes(5)
-        while (-not $result.AsyncWaitHandle.WaitOne(250)) {
-            if (-not [string]::IsNullOrWhiteSpace($cancellationPath) -and (Test-Path -LiteralPath $cancellationPath)) {
-                Remove-Item -LiteralPath $cancellationPath -Force -ErrorAction SilentlyContinue
-                throw "$Purpose is onderbroken om de klant-app in te stellen. Voltooi de eenmalige admin consent en kies daarna opnieuw Verbinden."
+        while ($true) {
+            $result = $listener.BeginGetContext($null, $null)
+            while (-not $result.AsyncWaitHandle.WaitOne(250)) {
+                if (-not [string]::IsNullOrWhiteSpace($cancellationPath) -and (Test-Path -LiteralPath $cancellationPath)) {
+                    Remove-Item -LiteralPath $cancellationPath -Force -ErrorAction SilentlyContinue
+                    throw "$Purpose is onderbroken om de klant-app in te stellen. Voltooi de eenmalige admin consent en kies daarna opnieuw Verbinden."
+                }
+                if ([DateTime]::UtcNow -ge $timeoutAt) {
+                    throw "De browseraanmelding duurde langer dan vijf minuten."
+                }
             }
-            if ([DateTime]::UtcNow -ge $timeoutAt) {
-                throw "De browseraanmelding duurde langer dan vijf minuten."
-            }
-        }
-        $context = $listener.EndGetContext($result)
-        $query = $context.Request.QueryString
-        $success = -not [string]::IsNullOrWhiteSpace([string]$query["code"])
-        $html = if ($success) {
-            "<html><body><h2>Aanmelding voltooid</h2><p>U kunt dit venster sluiten en teruggaan naar CaptureTech Autopilot GDAP.</p></body></html>"
-        } else {
-            "<html><body><h2>Aanmelding niet voltooid</h2><p>U kunt dit venster sluiten.</p></body></html>"
-        }
-        $bytes = [Text.Encoding]::UTF8.GetBytes($html)
-        $context.Response.ContentType = "text/html; charset=utf-8"
-        $context.Response.ContentLength64 = $bytes.Length
-        $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
-        $context.Response.OutputStream.Close()
-        if (-not $success) {
+
+            $context = $listener.EndGetContext($result)
+            $query = $context.Request.QueryString
+            $code = [string]$query["code"]
+            $error = [string]$query["error"]
             $description = [string]$query["error_description"]
-            if ([string]::IsNullOrWhiteSpace($description)) { $description = [string]$query["error"] }
-            throw "$Purpose is afgebroken: $description"
+            if (-not (Test-BrowserAuthorizationCallback -Code $code -Error $error -ErrorDescription $description)) {
+                # A browser resource request (for example /favicon.ico) is not
+                # an OAuth callback. Reply cleanly and remain available for
+                # the actual ?code= or ?error= redirect on this same port.
+                try {
+                    $context.Response.StatusCode = 204
+                    $context.Response.Close()
+                }
+                catch {
+                    # The browser may already have abandoned an auxiliary
+                    # request. It still must not affect the OAuth callback.
+                }
+                Write-EngineEvent -State $State -Message "$Purpose negeert een lokale browserrequest zonder OAuth-callback." -Level info -Technical $true
+                continue
+            }
+
+            $success = -not [string]::IsNullOrWhiteSpace($code)
+            $html = if ($success) {
+                "<html><body><h2>Aanmelding voltooid</h2><p>U kunt dit venster sluiten en teruggaan naar CaptureTech Autopilot GDAP.</p></body></html>"
+            } else {
+                "<html><body><h2>Aanmelding niet voltooid</h2><p>U kunt dit venster sluiten.</p></body></html>"
+            }
+            $bytes = [Text.Encoding]::UTF8.GetBytes($html)
+            $context.Response.ContentType = "text/html; charset=utf-8"
+            $context.Response.ContentLength64 = $bytes.Length
+            $context.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+            $context.Response.OutputStream.Close()
+            if (-not $success) {
+                if ([string]::IsNullOrWhiteSpace($description)) { $description = $error }
+                throw "$Purpose is afgebroken: $description"
+            }
+            return & $ExchangeCode $code
         }
-        return & $ExchangeCode ([string]$query["code"])
     }
     finally {
         if (-not [string]::IsNullOrWhiteSpace($cancellationPath)) {
@@ -514,9 +553,23 @@ function Get-BrowserGraphAccessToken {
     # a hint: Conditional Access and account selection still stay in Entra.
     $loginHint = [string]$State.SessionAccount
     $loginHintParameter = if ([string]::IsNullOrWhiteSpace($loginHint)) { "" } else { "&login_hint=$([uri]::EscapeDataString($loginHint))" }
-    $prompts = if ($State.BrowserInteractiveCompleted) { @("none", "select_account") } else { @("select_account") }
+    # In OOBE a failed prompt=none can produce a second redirect while Edge is
+    # still handling the first localhost callback. Use one ordinary browser
+    # SSO request for a subsequent customer tenant instead: browser cookies
+    # are reused silently where possible, while Entra can still request MFA or
+    # account selection in the same flow.
+    $prompts = if ([bool]$State.IsOobe -and [bool]$State.BrowserInteractiveCompleted) {
+        @("default")
+    }
+    elseif ($State.BrowserInteractiveCompleted) {
+        @("none", "select_account")
+    }
+    else {
+        @("select_account")
+    }
     foreach ($prompt in $prompts) {
-        $authorizeUri = "$authority/authorize?client_id=$([uri]::EscapeDataString($State.PublicClientId))&response_type=code&redirect_uri=$([uri]::EscapeDataString($redirectUri))&response_mode=query&scope=$([uri]::EscapeDataString($scope))&prompt=$prompt$loginHintParameter"
+        $promptParameter = if ($prompt -eq "default") { "" } else { "&prompt=$prompt" }
+        $authorizeUri = "$authority/authorize?client_id=$([uri]::EscapeDataString($State.PublicClientId))&response_type=code&redirect_uri=$([uri]::EscapeDataString($redirectUri))&response_mode=query&scope=$([uri]::EscapeDataString($scope))$promptParameter$loginHintParameter"
         $exchange = {
             param([string]$Code)
             try {
